@@ -374,21 +374,39 @@ image, but removes the need to install a distribution at container startup,
 resulting in a faster startup.  It also moves the user authentication to
 build-time instead of start-time.
 
->[!NOTE]: Credentials are only used to fetch a distribution, and are not stored
-> in the resulting image.  See the [using secrets](#using-secrets) section above
-> for an example of the json credentials file format.
+### Image build with credentials ###
 
-Build the image with credentials:
+> [!NOTE]
+> Credentials are only used to fetch a distribution, and are not stored
+> in the resulting image.
 
 ```console
 docker build \
-  --secret id=foundry_credentials,src=credentials.json
+  --secret id=foundry_username,src=<(echo "<your_username>") \
+  --secret id=foundry_password,src=<(echo "<your_password>") \
   --build-arg VERSION=13.332.0 \
   --tag felddy/foundryvtt:13.332.0 \
   https://github.com/felddy/foundryvtt-docker.git#develop
 ```
 
-Or build the image using a temporary URL:
+> [!TIP]
+> If you have stored your credentials in a json file, as documented in the
+> [using secrets](#using-secrets) section above, you can extract the username
+> and password and pass them as build secrets using the following syntax:
+>
+> ```console
+> docker build \
+>   --secret id=foundry_username,src=<(jq -r '.foundry_username' path/to/credentials.json) \
+>   --secret id=foundry_password,src=<(jq -r '.foundry_password' path/to/credentials.json) \
+>   --build-arg VERSION=13.332.0 \
+>   --tag felddy/foundryvtt:13.332.0 \
+>   https://github.com/felddy/foundryvtt-docker.git#develop
+> ```
+
+More information about Docker build secrets can be found in the [Docker
+documentation](https://docs.docker.com/build/building/secrets/).
+
+### Image build with a temporary URL ###
 
 ```console
 docker build \
