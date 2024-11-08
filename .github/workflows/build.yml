@@ -129,8 +129,7 @@ jobs:
       - foundry-secrets
       - lint
       - metadata
-    # TODO: unpin the version of the reusable workflow
-    uses: felddy/reusable-workflows/.github/workflows/docker-build-image.yml@improvement/build-secrets
+    uses: felddy/reusable-workflows/.github/workflows/docker-build-image.yml@v2
     with:
       artifact_name: pre-installed-${{ needs.config.outputs.image_artifact_name_stem }}-${{ needs.config.outputs.test_platform }}
       build_arg_1_name: VERSION
