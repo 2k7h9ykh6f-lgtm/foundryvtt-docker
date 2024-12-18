@@ -5,6 +5,7 @@ set -o errexit
 set -o pipefail
 
 CONFIG_DIR="/data/Config"
+DEPRECATED_ENVS="CONTAINER_PRESERVE_OWNER FOUNDRY_UID FOUNDRY_GID TIMEZONE"
 LICENSE_FILE="${CONFIG_DIR}/license.json"
 # setup logging
 # shellcheck disable=SC2034
@@ -20,6 +21,13 @@ if [ "$1" = "--version" ]; then
   echo "${image_version}"
   exit 0
 fi
+
+# Warn about deprecated environment variables
+for deprecated_env in $DEPRECATED_ENVS; do
+  if [ -n "${!deprecated_env:-}" ]; then
+    log_warn "The environment variable \"$deprecated_env\" is deprecated and will be ignored."
+  fi
+done
 
 # Setup the SIGTERM handler
 # shellcheck disable=SC2317
