@@ -324,12 +324,6 @@ find /data \
   -exec chown "${FOUNDRY_UID}:${FOUNDRY_GID}" {} +
 log_debug "Completed setting directory permissions."
 
-if [ "$1" = "--root-shell" ]; then #TODO remove this
-  log_warn "Starting a shell as requested by argument --root-shell"
-  /bin/sh
-  exit $?
-fi
-
 # drop privileges and handoff to launcher
 log "Starting launcher with uid:gid as ${FOUNDRY_UID}:${FOUNDRY_GID}."
 export CONTAINER_PRESERVE_CONFIG FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
