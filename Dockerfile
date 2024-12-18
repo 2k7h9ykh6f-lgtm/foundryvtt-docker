@@ -87,6 +87,8 @@ COPY \
   ./
 RUN addgroup --system --gid ${FOUNDRY_UID} foundry \
   && adduser --system --uid ${FOUNDRY_UID} --ingroup foundry foundry \
+  && mkdir -p resources \
+  && chmod a+rwx resources \
   && apt-get update && apt-get install -y \
   curl \
   file \

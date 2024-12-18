@@ -47,7 +47,7 @@ log_debug "CONTAINER_VERBOSE set.  Debug logging enabled."
 log_debug "Running as: $(id)"
 log_debug "Environment:\n$(env | sort | sed -E 's/(.*PASSWORD|KEY.*)=.*/\1=[REDACTED]/g')"
 
-cookiejar_file="cookiejar.json"
+cookiejar_file="/tmp/cookiejar.json"
 license_min_length=24
 secret_file="/run/secrets/config.json"
 
@@ -324,7 +324,7 @@ find /data \
   -exec chown "${FOUNDRY_UID}:${FOUNDRY_GID}" {} +
 log_debug "Completed setting directory permissions."
 
-if [ "$1" = "--root-shell" ]; then
+if [ "$1" = "--root-shell" ]; then #TODO remove this
   log_warn "Starting a shell as requested by argument --root-shell"
   /bin/sh
   exit $?
@@ -340,7 +340,7 @@ export CONTAINER_PRESERVE_CONFIG FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
   FOUNDRY_UPNP_LEASE_DURATION FOUNDRY_WORLD
 # set the TERM signal handler
 trap handle_sigterm TERM
-gosu "${FOUNDRY_UID}:${FOUNDRY_GID}" ./launcher.sh "$@" &
+./launcher.sh "$@" &
 child_pid=$!
 log_debug "Waiting for child pid: ${child_pid} to exit."
 wait "$child_pid"
