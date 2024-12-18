@@ -21,13 +21,6 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 
-# Set the timezone before we start logging dates
-if [ "$(id -u)" = 0 ]; then
-  # set timezone using environment
-  ln -snf /usr/share/zoneinfo/"${TIMEZONE:-UTC}" /etc/localtime
-  log_debug "Timezone set to: ${TIMEZONE:-UTC}"
-fi
-
 # Setup the SIGTERM handler
 # shellcheck disable=SC2317
 # SC2317 - shellcheck does not understand reachability via traps
