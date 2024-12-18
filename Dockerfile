@@ -92,7 +92,6 @@ RUN addgroup --system --gid ${FOUNDRY_UID} foundry \
   && apt-get update && apt-get install -y \
   curl \
   file \
-  gosu \
   jq \
   sed \
   tzdata \
