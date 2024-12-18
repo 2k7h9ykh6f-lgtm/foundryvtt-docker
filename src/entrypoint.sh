@@ -313,20 +313,8 @@ else
   log "Not modifying existing installation license key."
 fi
 
-# ensure the permissions are set correctly
-log "Setting data directory permissions."
-FOUNDRY_UID="${FOUNDRY_UID:-foundry}"
-FOUNDRY_GID="${FOUNDRY_GID:-foundry}"
-log_debug "Setting ownership of /data to ${FOUNDRY_UID}:${FOUNDRY_GID}."
-# skip files matching CONTAINER_PRESERVE_OWNER or already belonging to the right user and group
-find /data \
-  -regex "${CONTAINER_PRESERVE_OWNER:-}" -prune -or \
-  "(" -user "${FOUNDRY_UID}" -and -group "${FOUNDRY_GID}" ")" -or \
-  -exec chown "${FOUNDRY_UID}:${FOUNDRY_GID}" {} +
-log_debug "Completed setting directory permissions."
-
-# drop privileges and handoff to launcher
-log "Starting launcher with uid:gid as ${FOUNDRY_UID}:${FOUNDRY_GID}."
+# filter environment and handoff to launcher
+log "Starting launcher."
 export CONTAINER_PRESERVE_CONFIG FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
   FOUNDRY_COMPRESS_WEBSOCKET FOUNDRY_DEMO_CONFIG FOUNDRY_HOT_RELOAD FOUNDRY_HOSTNAME \
   FOUNDRY_IP_DISCOVERY FOUNDRY_LANGUAGE FOUNDRY_LOCAL_HOSTNAME FOUNDRY_MINIFY_STATIC_FILES \
