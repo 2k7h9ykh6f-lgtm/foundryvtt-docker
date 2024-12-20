@@ -75,7 +75,7 @@ body:
         com.foundryvtt.version = "13.333"
         org.opencontainers.image.authors = "markf+github@geekpad.com"
         org.opencontainers.image.created = "2022-09-01T23:22:04.337Z"
-        org.opencontainers.image.description = "An easy-to-deploy Dockerized Foundry Virtual Tabletop server."
+        org.opencontainers.image.description = "An easy-to-deploy containerized Foundry Virtual Tabletop server."
         org.opencontainers.image.licenses = "MIT"
         org.opencontainers.image.revision = "94d5cc47fc0c5ac5ae268988c6673c046e39e6b6"
         org.opencontainers.image.source = "https://github.com/felddy/foundryvtt-docker"
