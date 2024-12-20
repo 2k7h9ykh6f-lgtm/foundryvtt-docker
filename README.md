@@ -90,8 +90,6 @@ configuration files, set `CONTAINER_PRESERVE_CONFIG` to `true`.
 
     ```yaml
     ---
-    version: "3.8"
-
     services:
       foundry:
         image: felddy/foundryvtt:release
@@ -146,8 +144,6 @@ uses `secrets.json`.  Regardless of the name you choose it must be targeted to
 
     ```yaml
     ---
-    version: "3.8"
-
     secrets:
       config_json:
         file: secrets.json

@@ -1,11 +1,8 @@
 ---
-version: "3.8"
-
 services:
   foundry:
     image: felddy/foundryvtt:release
     hostname: my_foundry_host
-    restart: "no"
     volumes:
       - type: bind
         source: ./data
