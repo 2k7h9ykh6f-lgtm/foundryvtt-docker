@@ -114,16 +114,21 @@ if [ $install_required = true ]; then
     log "Using FOUNDRY_USERNAME and FOUNDRY_PASSWORD to authenticate."
     # If credentials are provided attempt authentication.
     # The resulting cookiejar is used to get a release URL or license.
-    # CONTAINER_VERBOSE default value should not be quoted.
-    # shellcheck disable=SC2086
+
+    # Temporarily disable errexit to capture failure from authenticate.js
+    set +e
     ./authenticate.js ${CONTAINER_VERBOSE+--log-level=debug} \
       --user-agent="${node_user_agent}" \
       "${FOUNDRY_USERNAME}" "${FOUNDRY_PASSWORD}" "${cookiejar_file}"
-    if [[ ! "${presigned_url:-}" ]]; then
+    auth_exit_code=$?
+    set -e
+
+    if [ ${auth_exit_code} -ne 0 ]; then
+      log_warn "Authentication failed with exit code ${auth_exit_code}."
+      rm -f "${cookiejar_file}"
+    elif [[ ! "${presigned_url:-}" ]]; then
       # If the presigned_url wasn't set by FOUNDRY_RELEASE_URL generate one now.
-      log "Using authenticated credentials to download release."
-      # CONTAINER_VERBOSE default value should not be quoted.
-      # shellcheck disable=SC2086
+      log "Using authenticated credentials to fetch release URL."
       presigned_url=$(./get_release_url.js ${CONTAINER_VERBOSE+--log-level=debug} \
         ${CONTAINER_URL_FETCH_RETRY+--retry=${CONTAINER_URL_FETCH_RETRY}} \
         --user-agent="${node_user_agent}" \
