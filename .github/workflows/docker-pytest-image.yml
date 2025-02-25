@@ -183,7 +183,7 @@ jobs:
 
       - name: Upload unencrypted data artifacts
         if: ( success() || failure() ) && steps.check_data_archive_key.outputs.do_encryption == 'false'
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # tag=v4.6.0
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1  # tag=v4.6.1
         with:
           name: ${{ inputs.data_artifact_name }}
           path: data.tar.gz
@@ -191,7 +191,7 @@ jobs:
 
       - name: Upload encrypted data artifacts
         if: ( success() || failure() ) && steps.check_data_archive_key.outputs.do_encryption == 'true'
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # tag=v4.6.0
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1  # tag=v4.6.1
         with:
           name: ${{ inputs.data_artifact_name }}
           path: data.tar.7z
