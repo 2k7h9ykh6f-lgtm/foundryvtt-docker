@@ -1,10 +1,8 @@
 ---
-
 services:
   foundry:
     image: felddy/foundryvtt:release
     hostname: my_foundry_host
-    restart: "no"
     volumes:
       - type: bind
         source: ./data
@@ -30,7 +28,6 @@ services:
       #   "resetSeconds": 3600
       #   }
       # - FOUNDRY_COMPRESS_WEBSOCKET=true
-      # - FOUNDRY_GID=foundry
       # - FOUNDRY_HOSTNAME=
       # - FOUNDRY_HOT_RELOAD=false
       # - FOUNDRY_IP_DISCOVERY=
@@ -47,12 +44,10 @@ services:
       # - FOUNDRY_SSL_CERT=
       # - FOUNDRY_SSL_KEY=
       # - FOUNDRY_TELEMETRY=
-      # - FOUNDRY_UID=foundry
       # - FOUNDRY_UPNP=false
       # - FOUNDRY_UPNP_LEASE_DURATION=
-      # - FOUNDRY_VERSION=12.331
+      # - FOUNDRY_VERSION=13.341
       # - FOUNDRY_WORLD=
-      # - TIMEZONE=US/Eastern
     ports:
       - target: 30000
         published: 30000

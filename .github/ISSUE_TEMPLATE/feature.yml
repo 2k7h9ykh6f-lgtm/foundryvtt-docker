@@ -39,7 +39,7 @@ body:
         - Right-click on the selected object.
         - Choose a color from the color change popup menu.
         - Click on the new purple color selection.
-        - Notice the object turns a beautifuly shade of purple.
+        - Notice the object turns a beautiful shade of purple.
     validations:
       required: true
   - type: textarea

@@ -32,7 +32,7 @@ repos:
         args:
           - --fix=lf
       - id: pretty-format-json
-        exclude: package-lock.json
+        exclude: ^(package-lock\.json|\.vscode/settings\.json)$
         args:
           - --autofix
       - id: requirements-txt-fixer
@@ -49,6 +49,11 @@ repos:
     rev: v3.3.3
     hooks:
       - id: prettier
+        # This is the latest version of v3 available from NPM. The pre-commit
+        # mirror does not pull tags for old major versions once a new major
+        # version tag is published.
+        additional_dependencies:
+          - prettier@3.3.1
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.35.1
     hooks:
@@ -117,9 +122,6 @@ repos:
           - --case-indent
           # Redirect operators are followed by a space
           - --space-redirects
-          # Assume bash syntax
-          - --language-dialect  # TODO: remove once container moves to Debian
-          - bash
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1
     hooks:

@@ -1,16 +1,12 @@
-#!/bin/sh
-# shellcheck disable=SC3010,SC3046,SC3051
-# SC3010 - busybox supports [[ ]]
-# SC3046 - busybox supports source command
-# SC3051 - busybox supports source command
+#!/bin/bash
 
 set -o nounset
 set -o errexit
-# shellcheck disable=SC3040
-# pipefail is supported by busybox
 set -o pipefail
 
-CONFIG_DIR="/data/Config"
+DATA_DIR="/data"
+CONFIG_DIR="${DATA_DIR}/config"
+DEPRECATED_ENVS="CONTAINER_PRESERVE_OWNER FOUNDRY_UID FOUNDRY_GID TIMEZONE"
 LICENSE_FILE="${CONFIG_DIR}/license.json"
 # setup logging
 # shellcheck disable=SC2034
@@ -27,12 +23,12 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 
-# Set the timezone before we start logging dates
-if [ "$(id -u)" = 0 ]; then
-  # set timezone using environment
-  ln -snf /usr/share/zoneinfo/"${TIMEZONE:-UTC}" /etc/localtime
-  log_debug "Timezone set to: ${TIMEZONE:-UTC}"
-fi
+# Warn about deprecated environment variables
+for deprecated_env in $DEPRECATED_ENVS; do
+  if [ -n "${!deprecated_env:-}" ]; then
+    log_warn "The environment variable \"$deprecated_env\" is deprecated and will be ignored."
+  fi
+done
 
 # Setup the SIGTERM handler
 # shellcheck disable=SC2317
@@ -52,8 +48,43 @@ log "Starting felddy/foundryvtt container v${image_version}"
 log_debug "CONTAINER_VERBOSE set.  Debug logging enabled."
 log_debug "Running as: $(id)"
 log_debug "Environment:\n$(env | sort | sed -E 's/(.*PASSWORD|KEY.*)=.*/\1=[REDACTED]/g')"
+log_debug "Data directory: ${DATA_DIR}"
 
-cookiejar_file="cookiejar.json"
+# Show the mount details for the data directory
+mount_info=$(findmnt -n -o SOURCE,FSTYPE,OPTIONS --target "${DATA_DIR}")
+log_debug "Mount info for ${DATA_DIR}: ${mount_info}"
+
+# Test volume permissions
+permissions_test_file="${DATA_DIR}/.container-permissions-test.txt"
+permission_test_failed=0
+log_debug "Testing permissions on ${permissions_test_file}"
+if ! touch "${permissions_test_file}" 2> /dev/null; then
+  log_error "Volume write test failed."
+  permission_test_failed=1
+else
+  log_debug "Volume write test succeeded."
+fi
+if ! cat "${permissions_test_file}" > /dev/null 2>&1; then
+  log_error "Volume read test failed."
+  permission_test_failed=1
+else
+  log_debug "Volume read test succeeded."
+fi
+if ! rm -f "${permissions_test_file}" 2> /dev/null; then
+  log_error "Volume delete test failed."
+  permission_test_failed=1
+else
+  log_debug "Volume delete test succeeded."
+fi
+if [ "${permission_test_failed}" -ne 0 ]; then
+  log_error "Aborting due to insufficient permissions on ${DATA_DIR}"
+  log_error "Container running as uid:gid: $(id -u):$(id -g)"
+  log_error "For more information see the discussion at: https://github.com/felddy/foundryvtt-docker/discussions/1197"
+  exit 1
+fi
+log_debug "All permissions tests succeeded."
+
+cookiejar_file="/tmp/cookiejar.json"
 license_min_length=24
 secret_file="/run/secrets/config.json"
 
@@ -119,16 +150,21 @@ if [ $install_required = true ]; then
     log "Using FOUNDRY_USERNAME and FOUNDRY_PASSWORD to authenticate."
     # If credentials are provided attempt authentication.
     # The resulting cookiejar is used to get a release URL or license.
-    # CONTAINER_VERBOSE default value should not be quoted.
-    # shellcheck disable=SC2086
+
+    # Temporarily disable errexit to capture failure from authenticate.js
+    set +e
     ./authenticate.js ${CONTAINER_VERBOSE+--log-level=debug} \
       --user-agent="${node_user_agent}" \
       "${FOUNDRY_USERNAME}" "${FOUNDRY_PASSWORD}" "${cookiejar_file}"
-    if [[ ! "${presigned_url:-}" ]]; then
+    auth_exit_code=$?
+    set -e
+
+    if [ ${auth_exit_code} -ne 0 ]; then
+      log_warn "Authentication failed with exit code ${auth_exit_code}."
+      rm -f "${cookiejar_file}"
+    elif [[ ! "${presigned_url:-}" ]]; then
       # If the presigned_url wasn't set by FOUNDRY_RELEASE_URL generate one now.
-      log "Using authenticated credentials to download release."
-      # CONTAINER_VERBOSE default value should not be quoted.
-      # shellcheck disable=SC2086
+      log "Using authenticated credentials to fetch release URL."
       presigned_url=$(./get_release_url.js ${CONTAINER_VERBOSE+--log-level=debug} \
         ${CONTAINER_URL_FETCH_RETRY+--retry=${CONTAINER_URL_FETCH_RETRY}} \
         --user-agent="${node_user_agent}" \
@@ -139,7 +175,7 @@ if [ $install_required = true ]; then
 
   # If CONTAINER_CACHE is null, set it to a default.
   # If it set to an empty string, disable the caching.
-  CONTAINER_CACHE="${CONTAINER_CACHE-/data/container_cache}"
+  CONTAINER_CACHE="${CONTAINER_CACHE-${DATA_DIR}/container_cache}"
 
   if [[ "${CONTAINER_CACHE:-}" ]]; then
     log "Using CONTAINER_CACHE: ${CONTAINER_CACHE}"
@@ -162,6 +198,8 @@ END_OF_LINE
 
   if [[ "${presigned_url:-}" ]]; then
     log "Downloading Foundry Virtual Tabletop release."
+    # Temporarily disable errexit for the curl command to capture its exit status
+    set +e
     # Download release if newer than cached version.
     # Filter out warnings about bad date formats if the file is missing.
     curl ${CONTAINER_VERBOSE+--verbose} --fail --location \
@@ -170,24 +208,46 @@ END_OF_LINE
       --output "${downloading_filename}" "${presigned_url}" 2>&1 \
       | tr "\r" "\n" \
       | sed --unbuffered '/^Warning: .* date/d'
+    curl_exit_code=$?
+    set -e
 
-    # Rename the download now that it is completed.
-    # If we had a cache hit, the file is already renamed.
-    mv "${downloading_filename}" "${release_filename}" > /dev/null 2>&1 || true
+    if [ ${curl_exit_code} -ne 0 ]; then
+      log_warn "Download from presigned URL failed with exit code ${curl_exit_code}."
+      # Remove any partially downloaded file
+      [ -f "${downloading_filename}" ] && rm -f "${downloading_filename}"
+
+      if [ -f "${release_filename}" ]; then
+        log "Falling back to existing cached release file: ${release_filename}"
+      else
+        log_error "No valid cached release file found. Unable to proceed with installation."
+        exit 1
+      fi
+    else
+      # Download succeeded so rename the file to the final name.
+      # If we had a cache hit, the file is already renamed.
+      mv "${downloading_filename}" "${release_filename}" > /dev/null 2>&1 || true
+    fi
   fi
 
   if [ -f "${release_filename}" ]; then
     log "Installing Foundry Virtual Tabletop ${FOUNDRY_VERSION}"
 
     # Check the mime-type of the file
-    log_debug "Checking mime-type of release file."
+    log_debug "Checking mime-type of release file: ${release_filename}"
     mime_type=$(file --mime-type --brief "${release_filename}")
     log_debug "Found mime-type: ${mime_type}"
 
     # Check if the file is a zip archive
     if [ "${mime_type}" = "application/zip" ]; then
-      log_debug "Extracting release file."
-      unzip -q "${release_filename}" 'resources/*'
+      if grep -q "^resources/app/main.mjs" <(zipinfo -1 "${release_filename}"); then
+        log_debug "Extracting Linux release file."
+        log_warn "You can conserve disk space by using Node.js releases instead of Linux releases."
+        unzip -q "${release_filename}" 'resources/*'
+      else
+        log_debug "Extracting Node.js release file."
+        mkdir -p "resources/app"
+        unzip -q "${release_filename}" -d "resources/app"
+      fi
       log_debug "Installation completed."
     else # The user provided the wrong file.
       if [ "${mime_type}" = "application/vnd.microsoft.portable-executable" ]; then
@@ -270,8 +330,11 @@ END_OF_LINE
     log "Using CONTAINER_PATCHES: ${CONTAINER_PATCHES}"
     if [ -d "${CONTAINER_PATCHES}" ]; then
       log "Container patches directory detected.  Starting patch application..."
-      for f in "${CONTAINER_PATCHES}"/*; do
-        [ -f "$f" ] || continue # we can't set nullglob in busybox
+      shopt -s nullglob # if the directory is empty we want an empty array
+      patch_files=("${CONTAINER_PATCHES}"/*)
+      shopt -u nullglob
+      for f in "${patch_files[@]}"; do
+        [ -f "$f" ] || continue # skip non-files
         log "Sourcing patch from file: $f"
         # shellcheck disable=SC1090
         source "$f"
@@ -322,35 +385,10 @@ else
   log "Not modifying existing installation license key."
 fi
 
-# ensure the permissions are set correctly
-log "Setting data directory permissions."
-FOUNDRY_UID="${FOUNDRY_UID:-foundry}"
-FOUNDRY_GID="${FOUNDRY_GID:-foundry}"
-log_debug "Setting ownership of /data to ${FOUNDRY_UID}:${FOUNDRY_GID}."
-# skip files matching CONTAINER_PRESERVE_OWNER or already belonging to the right user and group
-find /data \
-  -regex "${CONTAINER_PRESERVE_OWNER:-}" -prune -or \
-  "(" -user "${FOUNDRY_UID}" -and -group "${FOUNDRY_GID}" ")" -or \
-  -exec chown "${FOUNDRY_UID}:${FOUNDRY_GID}" {} +
-log_debug "Completed setting directory permissions."
-
-if [ "$1" = "--root-shell" ]; then
-  log_warn "Starting a shell as requested by argument --root-shell"
-  /bin/sh
-  exit $?
-fi
-
-# drop privileges and handoff to launcher
-log "Starting launcher with uid:gid as ${FOUNDRY_UID}:${FOUNDRY_GID}."
-export CONTAINER_PRESERVE_CONFIG FOUNDRY_ADMIN_KEY FOUNDRY_AWS_CONFIG \
-  FOUNDRY_COMPRESS_WEBSOCKET FOUNDRY_DEMO_CONFIG FOUNDRY_HOT_RELOAD FOUNDRY_HOSTNAME \
-  FOUNDRY_IP_DISCOVERY FOUNDRY_LANGUAGE FOUNDRY_LOCAL_HOSTNAME FOUNDRY_MINIFY_STATIC_FILES \
-  FOUNDRY_PASSWORD_SALT FOUNDRY_PROTOCOL FOUNDRY_PROXY_PORT FOUNDRY_PROXY_SSL \
-  FOUNDRY_ROUTE_PREFIX FOUNDRY_SSL_CERT FOUNDRY_SSL_KEY FOUNDRY_TELEMETRY FOUNDRY_UPNP \
-  FOUNDRY_UPNP_LEASE_DURATION FOUNDRY_WORLD
+log "Starting launcher."
 # set the TERM signal handler
 trap handle_sigterm TERM
-su-exec "${FOUNDRY_UID}:${FOUNDRY_GID}" ./launcher.sh "$@" &
+./launcher.sh "$@" &
 child_pid=$!
 log_debug "Waiting for child pid: ${child_pid} to exit."
 wait "$child_pid"

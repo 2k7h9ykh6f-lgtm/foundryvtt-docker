@@ -2,7 +2,7 @@
 
 import { readFileSync, writeFileSync } from "fs";
 
-const LANGUAGE_FILENAME: string = `${process.env.FOUNDRY_HOME}/resources/app/public/lang/en.json`;
+const LANGUAGE_FILENAME: string = `${process.env.HOME}/resources/app/public/lang/en.json`;
 let data: any = JSON.parse(readFileSync(LANGUAGE_FILENAME, "utf8"));
 
 if (process.env.CONTAINER_PRESERVE_CONFIG !== "true") {

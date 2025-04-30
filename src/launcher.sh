@@ -1,15 +1,7 @@
-#!/bin/sh
-# shellcheck disable=SC3001,SC3010,SC3021,SC3046,SC3051
-# SC3001 - busybox supports process substitution
-# SC3010 - busybox supports [[ ]]
-# SC3021 - busybox supports >&
-# SC3046 - busybox supports source command
-# SC3051 - busybox supports source command
+#!/bin/bash
 
 set -o nounset
 set -o errexit
-# shellcheck disable=SC3040
-# pipefail is supported by busybox
 set -o pipefail
 
 CONFIG_DIR="/data/Config"
@@ -47,12 +39,6 @@ else
   fi
 fi
 
-if [ "$1" = "--shell" ]; then
-  log_warn "Starting a shell as requested by argument --shell"
-  /bin/sh
-  exit $?
-fi
-
 if [[ "${FOUNDRY_IP_DISCOVERY:-}" == "false" ]]; then
   log "FOUNDRY_IP_DISCOVERY is set to false: Disabling IP discovery."
   # Add argument to disable IP discovery
@@ -79,4 +65,4 @@ done < <(env -0)
 log "Starting Foundry Virtual Tabletop."
 # We want ENV_VAR_CARRY_LIST to word split
 # shellcheck disable=SC2086
-exec env -i $ENV_VAR_CARRY_LIST node "$@" || log_error "Exec failed with code $?"
+exec env -i $ENV_VAR_CARRY_LIST /usr/local/bin/node "$@" || log_error "Exec failed with code $?"

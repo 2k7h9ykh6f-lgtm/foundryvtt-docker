@@ -4,6 +4,6 @@ set -o nounset
 set -o errexit
 set -o pipefail
 
-version=$(./bump-version show)
+version=$(./bump_version.sh show)
 
 git tag "v$version" && git push --tags
