@@ -73,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@5c7944e73c4c2a096b17a9cb74d65b6c2bbafbde  # tag=v2.9.1
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0  # tag=v2.12.0
         with:
           egress-policy: audit
           # allowed-endpoints: >
@@ -108,14 +108,14 @@ jobs:
             echo "do_decryption=false" >> $GITHUB_OUTPUT
           fi
 
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332  # tag=v4.1.7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # tag=v4.2.2
       - id: setup-python
-        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f  # tag=v5.1.1
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # tag=v5.6.0
         with:
           python-version: ${{ inputs.python_version }}
 
       - name: Cache testing environments
-        uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9  # tag=v4.0.2
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # tag=v4.2.3
         env:
           BASE_CACHE_KEY: "${{ github.job }}-${{ runner.os }}-\
             py${{ steps.setup-python.outputs.python-version }}-"
@@ -133,7 +133,7 @@ jobs:
           pip install --upgrade --requirement requirements-test.txt
 
       - name: Download Docker image artifact
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # tag=v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # tag=v4.3.0
         with:
           name: ${{ inputs.image_artifact_name }}
           path: ${{ env.ARTIFACT_WORK_DIR }}
@@ -183,7 +183,7 @@ jobs:
 
       - name: Upload unencrypted data artifacts
         if: ( success() || failure() ) && steps.check_data_archive_key.outputs.do_encryption == 'false'
-        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a  # tag=v4.3.6
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # tag=v4.6.2
         with:
           name: ${{ inputs.data_artifact_name }}
           path: data.tar.gz
@@ -191,7 +191,7 @@ jobs:
 
       - name: Upload encrypted data artifacts
         if: ( success() || failure() ) && steps.check_data_archive_key.outputs.do_encryption == 'true'
-        uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a  # tag=v4.3.6
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # tag=v4.6.2
         with:
           name: ${{ inputs.data_artifact_name }}
           path: data.tar.7z

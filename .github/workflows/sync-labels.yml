@@ -4,14 +4,20 @@ name: sync-labels
 on:
   push:
     paths:
-      - '.github/labels.yml'
-      - '.github/workflows/sync-labels.yml'
+      - .github/labels.yml
+      - .github/workflows/sync-labels.yml
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  diagnostics:
+    name: Run Diagnostics
+    uses: felddy/reusable-workflows/.github/workflows/diagnostics.yml@v2
   labeler:
+    needs:
+      - diagnostics
     permissions:
       # actions/checkout needs this to fetch code
       contents: read
@@ -20,13 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@5c7944e73c4c2a096b17a9cb74d65b6c2bbafbde  # tag=v2.9.1
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0  # tag=v2.12.0
         with:
           egress-policy: audit  # TODO: change to 'egress-policy: block' after couple of runs
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332  # tag=v4.1.7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # tag=v4.2.2
       - name: Sync repository labels
         if: success()
-        uses: crazy-max/ghaction-github-labeler@de749cf181958193cb7debf1a9c5bb28922f3e1b  # tag=v5.0.0
+        uses: crazy-max/ghaction-github-labeler@24d110aa46a59976b8a7f35518cb7f14f434c916  # tag=v5.3.0
         with:
           # This is a hideous ternary equivalent so we only do a dry run unless
           # this workflow is triggered by the develop branch.
