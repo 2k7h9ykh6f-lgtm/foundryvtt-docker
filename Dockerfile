@@ -89,6 +89,7 @@ RUN mkdir -p resources /data \
   curl \
   file \
   jq \
+  patch \
   sed \
   tzdata \
   unzip \
