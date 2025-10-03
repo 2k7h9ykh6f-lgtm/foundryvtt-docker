@@ -1,6 +1,6 @@
-ARG CONTAINER_VERSION=13.348.0
+ARG CONTAINER_VERSION=13.350.0
 ARG FOUNDRY_RELEASE_URL
-ARG FOUNDRY_VERSION=13.348
+ARG FOUNDRY_VERSION=13.350
 ARG NODE_IMAGE_VERSION=22-bookworm-slim
 
 FROM node:${NODE_IMAGE_VERSION} AS compile-typescript-stage
@@ -98,12 +98,12 @@ RUN mkdir -p resources /data \
 
 VOLUME ["/data"]
 # HTTP Server
-EXPOSE 30000/TCP
+EXPOSE 30000/tcp
 # TURN Server
 # Not exposing TURN ports due to bug in Docker.
 # See: https://github.com/moby/moby/issues/11185
-# EXPOSE 33478/UDP
-# EXPOSE 49152-65535/UDP
+# EXPOSE 33478/udp
+# EXPOSE 49152-65535/udp
 
 USER node
 ENTRYPOINT ["./entrypoint.sh"]
