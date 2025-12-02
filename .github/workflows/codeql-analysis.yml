@@ -30,7 +30,7 @@ permissions:
 jobs:
   diagnostics:
     name: Run Diagnostics
-    uses: felddy/reusable-workflows/.github/workflows/diagnostics.yml@v2
+    uses: felddy/reusable-workflows/.github/workflows/diagnostics.yml@v3
   analyze:
     name: Analyze
     needs:
