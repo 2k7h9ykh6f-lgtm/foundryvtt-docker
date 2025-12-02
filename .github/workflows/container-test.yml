@@ -1,10 +1,10 @@
 ---
-name: Test Docker image
+name: Test container image
 
-# This reusable workflow tests a Docker image using pytest.  The image is loaded
-# from the artifacts of a previous workflow.  If image decryption keys are
-# presented, the image is decrypted before loading.  If data encryption keys are
-# presented, the test results are encrypted before uploading as an artifact.
+# This reusable workflow tests a container image using pytest.  The image is
+# loaded from the artifacts of a previous workflow.  If image decryption keys
+# are presented, the image is decrypted before loading.  If data encryption keys
+# are presented, the test results are encrypted before uploading as an artifact.
 
 on: # yamllint disable-line rule:truthy
   workflow_call:
@@ -41,7 +41,7 @@ on: # yamllint disable-line rule:truthy
         type: string
       python_version:
         description: The Python version to use
-        default: "3.10"
+        default: "3.14"
         required: false
         type: string
     secrets:
@@ -75,7 +75,7 @@ jobs:
       - name: Harden Runner
         uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # tag=v2.13.3
         with:
-          egress-policy: audit
+          egress-policy: audit # TODO: Change to 'block' when possible
           # allowed-endpoints: >
           #   auth.docker.io:443
           #   files.pythonhosted.org:443
@@ -132,7 +132,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install --upgrade --requirement requirements-test.txt
 
-      - name: Download Docker image artifact
+      - name: Download container image artifact
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # tag=v6.0.0
         with:
           name: ${{ inputs.image_artifact_name }}
@@ -156,8 +156,9 @@ jobs:
           # Tag the image with the a test tag
           docker tag "${image_id}" "${{ env.TEST_IMAGE_TAG }}"
 
-      - name: Set data directory permissions
+      - name: Ensure data directory exists
         run: |
+          mkdir -p ${{ inputs.data_artifact_path }}
           chmod a+rwx ${{ inputs.data_artifact_path }}
 
       - name: Run tests
