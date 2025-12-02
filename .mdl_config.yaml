@@ -64,3 +64,8 @@ MD049:
 MD050:
   # Enforce asterisks as the style to use for strong
   style: asterisk
+
+# MD060/table-column-style
+MD060:
+  # Allow tables to use different styles
+  style: any
