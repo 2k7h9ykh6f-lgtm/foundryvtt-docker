@@ -23,14 +23,15 @@ Options:
 
 // Imports
 import { CookieJar, Cookie } from "tough-cookie";
-import FileCookieStore from "tough-cookie-file-store";
+import { ProxyAgent } from "proxy-agent";
 import * as cheerio from "cheerio";
 import createLogger from "./logging.js";
-import winston from "winston";
 import docopt from "docopt";
 import fetchCookie from "fetch-cookie";
+import FileCookieStore from "tough-cookie-file-store";
 import nodeFetch, { Headers } from "node-fetch";
 import process from "process";
+import winston from "winston";
 
 // Setup globals, to be configured in main()
 var cookieJar: CookieJar;
@@ -38,6 +39,7 @@ var fetch: typeof nodeFetch;
 var logger: winston.Logger;
 
 // Constants
+const AGENT = new ProxyAgent();
 const BASE_URL = "https://foundryvtt.com";
 const LOCAL_DOMAIN = "felddy.com";
 const LOGIN_URL = BASE_URL + "/auth/login/";
@@ -60,8 +62,9 @@ async function fetchTokens(): Promise<string> {
   logger.info(`Requesting CSRF tokens from ${BASE_URL}`);
   logger.debug(`Fetching: ${BASE_URL}`);
   const response = await fetch(BASE_URL, {
-    method: "GET",
+    agent: AGENT,
     headers: HEADERS,
+    method: "GET",
   });
   if (!response.ok) {
     throw new Error(`Unexpected response ${response.statusText}`);
@@ -103,6 +106,7 @@ async function login(
     body: form_params,
     method: "POST",
     headers: HEADERS,
+    agent: AGENT,
   });
   if (!response.ok) {
     throw new Error(`Unexpected response ${response.statusText}`);
