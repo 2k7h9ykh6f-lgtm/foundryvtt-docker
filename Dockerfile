@@ -1,7 +1,7 @@
 ARG CONTAINER_VERSION=14.357.0
 ARG FOUNDRY_RELEASE_URL
 ARG FOUNDRY_VERSION=14.357
-ARG NODE_IMAGE_VERSION=22-bookworm-slim
+ARG NODE_IMAGE_VERSION=24-trixie-slim
 
 FROM public.ecr.aws/docker/library/node:${NODE_IMAGE_VERSION} AS compile-typescript-stage
 
