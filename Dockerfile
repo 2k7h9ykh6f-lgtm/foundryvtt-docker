@@ -84,6 +84,7 @@ COPY \
   src/logging.sh \
   ./
 RUN mkdir -p resources /data \
+  && chmod a+rx /home/node \
   && chmod a+rwx resources /data \
   && apt-get update && apt-get install -y \
   curl \
