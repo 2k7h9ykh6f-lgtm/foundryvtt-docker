@@ -4,7 +4,6 @@
 # these updates when the pull request(s) in the appropriate skeleton are merged
 # and Lineage processes these changes.
 
-version: 2
 updates:
   - directory: /
     package-ecosystem: docker
@@ -20,6 +19,8 @@ updates:
         patterns:
           - "*"
 
+  - directory: /
+    package-ecosystem: docker-compose
   - package-ecosystem: github-actions
     directory: /
     schedule:

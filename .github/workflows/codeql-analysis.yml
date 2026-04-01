@@ -16,7 +16,7 @@ on: # yamllint disable-line rule:truthy
       - develop
       - develop-prerelease
   push:
-    # Dependabot triggered push events have read-only access, but uploading code
+    # Dependabot-triggered push events have read-only access, but uploading code
     # scanning requires write access.
     branches-ignore:
       - dependabot/**
@@ -45,7 +45,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Override automatic language detection by changing the below
+        # list
+        #
+        # Supported options are actions, c-cpp, csharp, go,
+        # java-kotlin, javascript-typescript, python, ruby, and swift.
         language:
+          - actions
           - javascript
           - python
         # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript',

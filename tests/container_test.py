@@ -10,6 +10,8 @@ import pytest
 
 from .utils import LogTailer
 
+HEALTH_TIMEOUT = 180
+NO_LOG_TIMEOUT = 60
 READY_MESSAGE = "Server started and listening on port"
 
 
@@ -68,7 +70,6 @@ def test_wait_for_ready(main_container, redacted_printer):
     This could take a while if we have to back off due to rate limiting.
     If the logs stop updating for too long, or the container exits, fail.
     """
-    NO_LOG_TIMEOUT = 60
     tailer = LogTailer(main_container, since=1)
     timeout: float = time.time() + NO_LOG_TIMEOUT
     while (not tailer.empty()) or (
@@ -89,12 +90,14 @@ def test_wait_for_ready(main_container, redacted_printer):
     else:
         # The container exited or we timed out
         print(
-            f"Test ending... container status: {main_container.status}, log timeout: {time.time() - timeout}"
+            f"Test ending... container status: {main_container.status}, "
+            f"log timeout: {time.time() - timeout}"
         )
         assert main_container.status == "running", "The container unexpectedly exited."
-        assert (
-            False
-        ), "Logging stopped for {NO_LOG_TIMEOUT} seconds, and did not contain the ready message."
+        raise AssertionError(
+            f"Logging stopped for {NO_LOG_TIMEOUT} seconds, and did not "
+            "contain the ready message."
+        )
 
 
 @pytest.mark.slow
@@ -102,9 +105,8 @@ def test_wait_for_healthy(main_container):
     """Wait for container to be healthy."""
     # It could already in an unhealthy state when we start as we may have been
     # rate limited.
-    TIMEOUT = 180
     api_client = main_container.client.api
-    for _ in range(TIMEOUT):
+    for _ in range(HEALTH_TIMEOUT):
         # Verify the container is still running
         main_container.reload()
         assert main_container.status == "running", "The container unexpectedly exited."
@@ -114,9 +116,10 @@ def test_wait_for_healthy(main_container):
             break
         time.sleep(1)
     else:
-        assert (
-            False
-        ), f"Container status did not transition to 'healthy' within {TIMEOUT} seconds."
+        raise AssertionError(
+            "Container status did not transition to "
+            f"'healthy' within {HEALTH_TIMEOUT} seconds."
+        )
 
 
 @pytest.mark.skipif(
