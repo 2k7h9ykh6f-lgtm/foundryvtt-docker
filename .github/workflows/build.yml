@@ -83,7 +83,7 @@ jobs:
     with:
       build-secret-1-name: foundry_password
       build-secret-2-name: foundry_username
-      platforms: ${{ needs.config.outputs.platforms }}
+      platforms: ${{ needs.config.outputs.test_platforms }}
       image-name: ${{ needs.config.outputs.image_name }}-preinstall
       context: .
       dockerfile: ./Dockerfile
