@@ -65,7 +65,7 @@ jobs:
     uses: felddy/reusable-workflows/.github/workflows/container-build.yml@v4
     with:
       platforms: ${{ needs.config.outputs.platforms }}
-      image-name: ${{ needs.config.outputs.image_name }}-preinstall
+      image-name: ${{ needs.config.outputs.image_name }}
       context: .
       dockerfile: ./Dockerfile
       scan-severity: CRITICAL,HIGH
