@@ -8,44 +8,44 @@
 # crazy-max/ghaction-github-labeler configuration file located at
 # .github/labels.yml.
 
-ansible:
+"ansible :scroll:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/ansible/**"
-dependencies:
+"dependencies :game_die:":
   - changed-files:
       - any-glob-to-any-file:
           # Add any dependency files used.
           - "**/Pipfile*"
           - .pre-commit-config.yaml
           - requirements*.txt
-docker:
+"docker :whale:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/compose*.yml"
           - "**/docker-compose*.yml"
           - "**/Dockerfile*"
-documentation:
+"documentation :memo:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.md"
-github-actions:
+"github-actions :octocat:":
   - changed-files:
       - any-glob-to-any-file:
           - .github/workflows/**
-javascript:
+"javascript :coffee:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.js"
-packer:
+"packer :package:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.pkr.hcl"
-python:
+"python :snake:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.py"
-shell script:
+"shell script :shell:":
   - changed-files:
       - any-glob-to-any-file:
           # If this project has any shell scripts that do not end in the ".sh"
@@ -53,11 +53,11 @@ shell script:
           - "**/*.sh"
           - bump-version
           - setup-env
-terraform:
+"terraform :cloud:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.tf"
-test:
+"test :test_tube:":
   - changed-files:
       - any-glob-to-any-file:
           # Add any test-related files or paths.
@@ -70,15 +70,15 @@ test:
           - compose.yml
           - pytest.ini
           - tests/**
-typescript:
+"typescript :blue_book:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.ts"
-upstream update:
+"upstream :eyes:":
   - head-branch:
       # Any Lineage pull requests should use this branch.
       - lineage/skeleton
-version bump:
+"version bump :bookmark:":
   - changed-files:
       - any-glob-to-any-file:
           # Ensure this matches your version tracking file(s).
