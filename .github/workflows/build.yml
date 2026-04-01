@@ -134,6 +134,7 @@ jobs:
       - config
       - build
       - test
+      - test-preinstalled
     uses: felddy/reusable-workflows/.github/workflows/container-publish-manifest.yml@v4
     permissions:
       actions: read
@@ -150,6 +151,7 @@ jobs:
     needs:
       - config
       - build-preinstalled
+      - test
       - test-preinstalled
     uses: felddy/reusable-workflows/.github/workflows/container-publish-manifest.yml@v4
     permissions:
