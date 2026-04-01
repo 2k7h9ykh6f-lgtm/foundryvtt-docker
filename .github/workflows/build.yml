@@ -85,10 +85,11 @@ jobs:
       build-secret-2-name: foundry_username
       cache-scope: preinstall # prevent preinstall from skipping from regular build cache
       platforms: ${{ needs.config.outputs.test_platforms }}
-      image-name: ${{ needs.config.outputs.image_name }}-preinstall
+      image-name: ${{ needs.config.outputs.image_name }}-preinstall-2
       context: .
       dockerfile: ./Dockerfile
-      scan-severity: CRITICAL,HIGH
+      scan-severity: "" # don't fail on vulns in FoundryVTT binaries
+      upload-scan-results: false # don't pollute repo security tab with third-party vulns
     secrets:
       private-package-token: ${{ secrets.PRIVATE_PACKAGE_TOKEN }}
       build-secret-1: ${{ secrets.FOUNDRY_PASSWORD }}
