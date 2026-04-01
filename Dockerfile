@@ -7,6 +7,7 @@ ARG NODE_IMAGE_VERSION=24-trixie-slim
 ARG NPM_VERSION=11.12.1
 
 FROM public.ecr.aws/docker/library/node:${NODE_IMAGE_VERSION} AS base
+ARG NPM_VERSION
 RUN npm install -g npm@${NPM_VERSION}
 
 FROM base AS compile-typescript-stage
