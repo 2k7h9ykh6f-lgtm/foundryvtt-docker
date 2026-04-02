@@ -1,4 +1,5 @@
 --editable .[test]
 --requirement requirements.txt
+hypothesis
 pre-commit
 pytest

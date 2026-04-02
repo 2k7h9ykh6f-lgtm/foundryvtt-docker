@@ -33,8 +33,9 @@ homepage = "https://github.com/felddy"
 issues = "https://github.com/felddy/foundryvtt-docker/issues"
 source = "https://github.com/felddy/foundryvtt-docker"
 
-[project.optional-dependencies]
-test = ["coverage", "coveralls", "docker", "pre-commit", "pytest", "pytest-cov"]
+[dependency-groups]
+test = ["coverage", "coveralls", "docker", "hypothesis", "pre-commit", "pytest", "pytest-cov"]
+dev = ["ipython", "mypy", { include-group = "test" }]
 
 [tool.setuptools.dynamic]
 version = { file = "src/version.txt" }
