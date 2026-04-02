@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
+const CSS_THEME: string = "dark";
 const DATA_PATH: string = "/data";
 const FOUNDRY_PORT: number = 30000;
 const LANGUAGE: string = "en.core";
 const MAXIMUM_PORT: number = 65535;
 const MINIMUM_PORT: number = 1;
-const UPDATE_CHANNEL: string = "release";
+const UPDATE_CHANNEL: string = "stable";
 
 let parsedDemoConfig: any = undefined;
 
@@ -41,8 +42,9 @@ let options: object = {
   awsConfig: process.env.FOUNDRY_AWS_CONFIG || null,
   compressSocket: process.env.FOUNDRY_COMPRESS_WEBSOCKET == "true",
   compressStatic: process.env.FOUNDRY_MINIFY_STATIC_FILES == "true",
-  cssTheme: process.env.FOUNDRY_CSS_THEME || "foundry",
+  cssTheme: process.env.FOUNDRY_CSS_THEME || CSS_THEME,
   dataPath: DATA_PATH,
+  deleteNEDB: process.env.FOUNDRY_DELETE_NEDB == "true",
   demo: parsedDemoConfig,
   fullscreen: false,
   hostname: process.env.FOUNDRY_HOSTNAME || null,
@@ -60,9 +62,17 @@ let options: object = {
   ),
   proxySSL: process.env.FOUNDRY_PROXY_SSL == "true",
   routePrefix: process.env.FOUNDRY_ROUTE_PREFIX || null,
+  serviceConfig: process.env.FOUNDRY_SERVICE_CONFIG || null,
   sslCert: process.env.FOUNDRY_SSL_CERT || null,
   sslKey: process.env.FOUNDRY_SSL_KEY || null,
-  telemetry: process.env.FOUNDRY_TELEMETRY || null,
+  telemetry:
+    process.env.FOUNDRY_TELEMETRY === "true"
+      ? true
+      : process.env.FOUNDRY_TELEMETRY === "false"
+        ? false
+        : null,
+  tempDir: process.env.FOUNDRY_TEMP_DIR || null,
+  unixSocket: process.env.FOUNDRY_UNIX_SOCKET || null,
   updateChannel: UPDATE_CHANNEL,
   upnp: process.env.FOUNDRY_UPNP == "true",
   upnpLeaseDuration: process.env.FOUNDRY_UPNP_LEASE_DURATION || null,

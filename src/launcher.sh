@@ -50,6 +50,30 @@ if [[ "${FOUNDRY_IP_DISCOVERY:-}" == "false" ]]; then
   set -- "$@" --noipdiscovery
 fi
 
+if [[ "${FOUNDRY_LOG_SIZE:-}" ]]; then
+  log "FOUNDRY_LOG_SIZE is set: Setting maximum log size to ${FOUNDRY_LOG_SIZE}."
+  set -- "$@" --logsize="${FOUNDRY_LOG_SIZE}"
+fi
+
+if [[ "${FOUNDRY_MAX_LOGS:-}" ]]; then
+  log "FOUNDRY_MAX_LOGS is set: Setting maximum log count to ${FOUNDRY_MAX_LOGS}."
+  set -- "$@" --maxlogs="${FOUNDRY_MAX_LOGS}"
+fi
+
+if [[ "${FOUNDRY_NO_BACKUPS:-}" == "true" ]]; then
+  log "FOUNDRY_NO_BACKUPS is set to true: Disabling automatic world backups."
+  set -- "$@" --nobackups
+fi
+
+if [[ "${FOUNDRY_SERVICE_KEY:-}" ]]; then
+  if [[ -z "${FOUNDRY_SERVICE_CONFIG:-}" ]]; then
+    log_error "FOUNDRY_SERVICE_KEY is set but FOUNDRY_SERVICE_CONFIG is not.  Both are required."
+    exit 1
+  fi
+  log "FOUNDRY_SERVICE_KEY is set: Enabling service provider configuration."
+  set -- "$@" --serviceKey="${FOUNDRY_SERVICE_KEY}"
+fi
+
 # Space separated list of regex rules which environment variables must meet to
 # be carried over to the new environment, which Node/Foundry will be running in.
 ENV_VAR_PASSLIST_REGEX='^HOME$ ^NODE_.+$ ^TZ$'

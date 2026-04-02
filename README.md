@@ -85,6 +85,12 @@ means **changes made in the server's configuration GUI will not persist between
 container restarts**.  If you would like to disable the regeneration of these
 configuration files, set `CONTAINER_PRESERVE_CONFIG` to `true`.
 
+> [!IMPORTANT]
+> Always set a stable `hostname` in your `compose.yml` (or `--hostname` in
+> `docker run`).  Foundry binds its software license to the container hostname.
+> If no hostname is set, Docker assigns a random container ID on each start,
+> causing license verification to fail after every restart.
+
 1. Create a `compose.yml` file similar to the one below.  Provide
    your credentials as values to the environment variables:
 
@@ -99,9 +105,10 @@ configuration files, set `CONTAINER_PRESERVE_CONFIG` to `true`.
             source: <your_data_dir>
             target: /data
         environment:
-          - FOUNDRY_PASSWORD=<your_password>
           - FOUNDRY_USERNAME=<your_username>
+          - FOUNDRY_PASSWORD=<your_password>
           - FOUNDRY_ADMIN_KEY=atropos
+          - FOUNDRY_TELEMETRY=true
         ports:
           - target: 30000
             published: 30000
@@ -196,7 +203,7 @@ upgrade to a new version of Foundry pull an updated image version.
 1. Pull the new image:
 
     ```console
-    docker pull felddy/foundryvtt:13
+    docker pull felddy/foundryvtt:14
     ```
 
 1. Follow the previous instructions for [running](#running) the container above.
@@ -282,23 +289,31 @@ secrets](#using-secrets) instead of environment variables.
 | `FOUNDRY_ADMIN_KEY` | Admin password to be applied at startup.  If omitted the admin password will be cleared.  May be set [using secrets](#using-secrets). | |
 | `FOUNDRY_AWS_CONFIG` | An absolute or relative path that points to the [awsConfig.json](https://foundryvtt.com/article/aws-s3/) or `true` for AWS environment variable [credentials evaluation](https://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/setting-credentials-node.html) usage. | `null` |
 | `FOUNDRY_COMPRESS_WEBSOCKET` | Set to `true` to enable compression of data sent from the server to the client via websocket. This is recommended for network performance. | `false` |
-| `FOUNDRY_CSS_THEME` | Choose the CSS theme for the setup page.  Choose from `foundry`, `fantasy`, or `scifi`. | `foundry` |
+| `FOUNDRY_CSS_THEME` | Choose the CSS theme for the setup page.  Valid values are `dark`, `fantasy`, and `scifi`. | `dark` |
 | `FOUNDRY_DEMO_CONFIG` | Demo mode allows you to configure a world which will be automatically launched and reset at a frequency of your choosing.  When the world is reset, it is deactivated.  The source data for the world is restored to its original state using a provided `.zip` file, and the next reset is automatically scheduled.  See: [Configuring demo mode](https://foundryvtt.com/article/configuration/#command-line). | |
+| `FOUNDRY_DELETE_NEDB` | Set to `true` to automatically delete legacy NeDB `.db` files after they have been migrated to the LevelDB format introduced in Version 11.  Enabling this recovers disk space but removes the ability to roll back to a pre-migration state.  Only relevant for data volumes previously used with Foundry Version 10 or earlier. | `false` |
 | `FOUNDRY_HOSTNAME` | A custom hostname to use in place of the host machine's public IP address when displaying the address of the game session. This allows for reverse proxies or DNS servers to modify the public address. | `null` |
 | `FOUNDRY_HOT_RELOAD` | Set to `true` to allow packages to hot-reload certain assets, such as CSS, HTML, and localization files without a full refresh. This setting is only recommended for developers. | `false` |
 | `FOUNDRY_IP_DISCOVERY` | Allow the Foundry server to discover and report the accessibility of the host machine's public IP address and port.  Setting this to `false` may reduce server startup time in instances where this discovery would timeout. | `true` |
 | `FOUNDRY_LANGUAGE` | The default application language and module which provides the core translation files. | `en.core` |
 | `FOUNDRY_LOCAL_HOSTNAME` | Override the local network address used for invitation links, mirroring the functionality of the `FOUNDRY_HOSTNAME` option which configures the external address. | `null` |
 | `FOUNDRY_LICENSE_KEY` | The license key to install. e.g.; `AAAA-BBBB-CCCC-DDDD-EEEE-FFFF`  If left unset, a license key will be fetched when using account authentication.   If multiple license keys are associated with an account, one will be chosen at random.  Specific licenses can be selected by passing in an integer index.  The first license key being `1`.  May be set [using secrets](#using-secrets). | |
+| `FOUNDRY_LOG_SIZE` | The maximum size a log file can reach before it is rotated.  Units must be included. e.g.; `1024k`, `64m`, `1g`. | |
+| `FOUNDRY_MAX_LOGS` | The maximum number of log files to retain before older ones are deleted. | |
 | `FOUNDRY_MINIFY_STATIC_FILES` | Set to `true` to reduce network traffic by serving minified static JavaScript and CSS files.  Enabling this setting is recommended for most users, but module developers may wish to disable it. | `false` |
+| `FOUNDRY_NO_BACKUPS` | Set to `true` to disable the automatic backup of world data that Foundry creates before performing major version migrations.  Users with an external backup strategy or constrained storage may wish to enable this. | `false` |
 | `FOUNDRY_PASSWORD_SALT` | Custom salt string to be applied to the admin password instead of the default salt string.  May be set [using secrets](#using-secrets). | `null` |
 | `FOUNDRY_PROTOCOL` | If left unset Foundry VTT will bind to IPv4 and IPv6 interfaces.  To limit to IPv4 only, set to `4`.  To limit to IPv6 only set to `6`. | `null` |
 | `FOUNDRY_PROXY_PORT` | Inform the Foundry server that the software is running behind a reverse proxy on some other port. This allows the invitation links created to the game to include the correct external port. | `null` |
 | `FOUNDRY_PROXY_SSL` | Indicates whether the software is running behind a reverse proxy that uses SSL. This allows invitation links and A/V functionality to work as if the Foundry server had SSL configured directly. | `false` |
 | `FOUNDRY_ROUTE_PREFIX` | A string path which is appended to the base hostname to serve Foundry VTT content from a specific namespace. For example setting this to `demo` will result in data being served from `http://x.x.x.x:30000/demo/`. | `null` |
+| `FOUNDRY_SERVICE_CONFIG` | The absolute path inside the container to a service configuration file.  Must be set together with `FOUNDRY_SERVICE_KEY`. | `null` |
+| `FOUNDRY_SERVICE_KEY` | Used in conjunction with `FOUNDRY_SERVICE_CONFIG`.  Setting this without `FOUNDRY_SERVICE_CONFIG` will cause the container to exit with an error. | |
 | `FOUNDRY_SSL_CERT` | An absolute or relative path that points towards a SSL certificate file which is used jointly with the sslKey option to enable SSL and https connections. If both options are provided, the server will start using HTTPS automatically. | `null` |
 | `FOUNDRY_SSL_KEY` | An absolute or relative path that points towards a SSL key file which is used jointly with the sslCert option to enable SSL and https connections. If both options are provided, the server will start using HTTPS automatically. | `null` |
-| `FOUNDRY_TELEMETRY` | Set to `true` to enable FoundryVTT telemetry, `false` to disable.  This options allows the collection of anonymous usage data to help improve FoundryVTT. | `null` |
+| `FOUNDRY_TELEMETRY` | Set to `true` to enable FoundryVTT telemetry, `false` to disable.  This option allows the collection of anonymous usage data to help improve FoundryVTT.  It is recommended to explicitly set this value.  Leaving this unset will cause Foundry to prompt the user to make a choice on every launch. | |
+| `FOUNDRY_TEMP_DIR` | An absolute path to a directory used for temporary storage of package `.zip` archives while they are being downloaded and installed.  When set, archives land outside the user data directory, so only the unpacked content counts against data volume space.  Useful for hosts with constrained `/data` storage. | |
+| `FOUNDRY_UNIX_SOCKET` | An absolute path to a Unix domain socket for the server listener.  When set, Foundry binds to the socket instead of the TCP port, which is useful for local reverse-proxy configurations (e.g. nginx or caddy via socket).  If both a port and a socket path are configured, the socket takes precedence. | `null` |
 | `FOUNDRY_UPNP` | Allow Universal Plug and Play to automatically request port forwarding for the Foundry server port to your local network address. | `false` |
 | `FOUNDRY_UPNP_LEASE_DURATION` | Sets the Universal Plug and Play lease duration, allowing for the possibility of permanent leases for routers which do not support temporary leases.  To define an indefinite lease duration set the value to `0`. | `null` |
 | `FOUNDRY_VERSION` | Version of Foundry Virtual Tabletop to install. | `14.359` |
@@ -329,6 +344,7 @@ particularly useful.
 | `config.json` | `foundry_license_key`   | Overrides `FOUNDRY_LICENSE_KEY` environment variable.   |
 | `config.json` | `foundry_password`      | Overrides `FOUNDRY_PASSWORD` environment variable.      |
 | `config.json` | `foundry_password_salt` | Overrides `FOUNDRY_PASSWORD_SALT` environment variable. |
+| `config.json` | `foundry_service_key`   | Overrides `FOUNDRY_SERVICE_KEY` environment variable.   |
 | `config.json` | `foundry_username`      | Overrides `FOUNDRY_USERNAME` environment variable.      |
 
 ## Building from source ##
