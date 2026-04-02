@@ -15,11 +15,60 @@ LOG_NAME="Entrypoint"
 
 # shellcheck source=src/logging.sh
 source logging.sh
+# shellcheck source=src/backoff.sh
+source backoff.sh
+
+# ── Trap handlers ─────────────────────────────────────────────────────────────
+
+# Flag set by trap_sigterm so trap_exit knows the exit was operator-initiated.
+_sigterm_received=false
+
+# trap_sigterm — TERM signal handler.
+# Forwards SIGTERM to the launcher child process and interrupts any in-progress
+# backoff sleep so the container shuts down promptly.
+# shellcheck disable=SC2329
+# SC2329 - shellcheck does not understand reachability via traps
+trap_sigterm() {
+  log_warn "TERM signal received.  Shutting down server."
+  _sigterm_received=true
+  # Only attempt to terminate if the child process is still running
+  if kill -0 "$child_pid" 2> /dev/null; then
+    log_debug "Sending TERM signal to child pid: ${child_pid}"
+    kill -TERM "$child_pid" 2> /dev/null
+  else
+    log_warn "Child pid: ${child_pid} exited before we could sent TERM signal."
+  fi
+  # Interrupt any in-progress backoff sleep subprocess
+  if [[ -n "${backoff_sleep_pid:-}" ]]; then
+    log_debug "Interrupting backoff sleep pid: ${backoff_sleep_pid}"
+    kill "${backoff_sleep_pid}" 2> /dev/null || true
+  fi
+}
+
+# trap_exit — EXIT handler.
+# Routes every non-zero exit through backoff_on_failure so that all failure
+# paths (permissions, download, bad zip, launcher crash, etc.) are subject to
+# backoff. SIGTERM-induced exits are treated as clean shutdowns.
+# shellcheck disable=SC2329
+# SC2329 - shellcheck does not understand reachability via traps
+trap_exit() {
+  local code=$?
+  log_debug "trap_exit: fired with exit code ${code} (sigterm_received=${_sigterm_received})"
+  if [[ $code -eq 0 || "${_sigterm_received}" == "true" || $code -eq 143 ]]; then
+    backoff_reset
+  else
+    backoff_on_failure "$code"
+  fi
+}
+trap trap_exit EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 image_version=$(cat image_version.txt)
 
 if [ "$1" = "--version" ]; then
   echo "${image_version}"
+  trap - EXIT
   exit 0
 fi
 
@@ -29,20 +78,6 @@ for deprecated_env in $DEPRECATED_ENVS; do
     log_warn "The environment variable \"$deprecated_env\" is deprecated and will be ignored."
   fi
 done
-
-# Setup the SIGTERM handler
-# shellcheck disable=SC2329
-# SC2329 - shellcheck does not understand reachability via traps
-handle_sigterm() {
-  log_warn "TERM signal received.  Shutting down server."
-  # Only attempt to terminate if the child process is still running
-  if kill -0 "$child_pid" 2> /dev/null; then
-    log_debug "Sending TERM signal to child pid: ${child_pid}"
-    kill -TERM "$child_pid" 2> /dev/null
-  else
-    log_warn "Child pid: ${child_pid} exited before we could sent TERM signal."
-  fi
-}
 
 log "Starting felddy/foundryvtt container v${image_version}"
 log_debug "CONTAINER_VERBOSE set.  Debug logging enabled."
@@ -122,9 +157,6 @@ fi
 
 # Check to see if an install is required
 install_required=false
-# Track whether a presigned URL request is made.
-# We use this information to protect from a download loop.
-requested_presigned_url=false
 if [ -f "resources/app/package.json" ]; then
   # FoundryVTT no longer supports the "version" field in package.json
   # We need to build up a pseudo-version using the generation and build values
@@ -171,7 +203,6 @@ if [ $install_required = true ]; then
         ${CONTAINER_URL_FETCH_RETRY+--retry=${CONTAINER_URL_FETCH_RETRY}} \
         --user-agent="${node_user_agent}" \
         "${cookiejar_file}" "${FOUNDRY_VERSION}")
-      requested_presigned_url=true
     fi
   fi
 
@@ -392,30 +423,13 @@ fi
 export FOUNDRY_ADMIN_KEY FOUNDRY_PASSWORD_SALT FOUNDRY_SERVICE_KEY
 
 log "Starting launcher."
-# set the TERM signal handler
-trap handle_sigterm TERM
+trap trap_sigterm TERM
 ./launcher.sh "$@" &
 child_pid=$!
 log_debug "Waiting for child pid: ${child_pid} to exit."
 wait "$child_pid"
 exit_code=$?
-# clear the TERM signal handler
 trap - TERM
 log_debug "Child process exited with code: ${exit_code}."
 
-# Check if the child exited with an error code
-if [ $exit_code -ne 0 ]; then
-  log_error "Child process failed with error code: $exit_code"
-fi
-
-# If the container requested a new presigned URL but disabled the cache
-# we are going to sleep forever to prevent a download loop.
-if [[ "${requested_presigned_url}" == "true" && "${CONTAINER_CACHE:-}" == "" ]]; then
-  log_warn "Server exited after downloading a release while the CONTAINER_CACHE was disabled."
-  log_warn "This configuration could lead to a restart loop putting excessive load on the release server."
-  log_warn "Please re-enable the CONTAINER_CACHE to allow the container to safely exit."
-  log_warn "Sleeping..."
-  while true; do sleep 4; done
-fi
-
-exit 0
+exit "$exit_code"

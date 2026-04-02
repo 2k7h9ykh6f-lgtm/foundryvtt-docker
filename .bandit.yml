@@ -9,5 +9,10 @@ tests:
 # - B101
 # - B102
 
+# These skips are required for the tests suite.
+# They are not applied to the production code.
 skips:
-  - B101  # skip "assert used" check since assertions are required in pytests
+  - B101 # use of assert detected
+  - B404 # security implications associated with the subprocess module
+  - B603 # subprocess call - check for execution of untrusted input
+  - B607 # starting a process with a partial executable path

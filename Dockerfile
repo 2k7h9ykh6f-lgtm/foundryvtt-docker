@@ -85,6 +85,7 @@ COPY --from=compile-typescript-stage /root/dist/ .
 COPY \
   package.json \
   package-lock.json \
+  src/backoff.sh \
   src/check_health.sh \
   src/entrypoint.sh \
   src/launcher.sh \
