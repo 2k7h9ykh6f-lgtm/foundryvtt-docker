@@ -33,7 +33,7 @@ def _run(
         log_warn()  { :; }
         log_error() { :; }
     """)
-    full_script = f"cd {SRC_DIR}\n{log_stubs}\nsource backoff.sh\n{script}"
+    full_script = f"cd '{SRC_DIR}'\n{log_stubs}\nsource backoff.sh\n{script}"
     merged_env = {**os.environ, **(env or {})}
     merged_env.pop("KUBERNETES_SERVICE_HOST", None)
     if env and "KUBERNETES_SERVICE_HOST" in env:
@@ -281,7 +281,7 @@ def test_no_cache_triggers_indefinite_sleep(tmp_path: Path) -> None:
 
     _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
     script = textwrap.dedent(f"""\
-        cd {SRC_DIR}
+        cd '{SRC_DIR}'
         {_log_stubs}
         source backoff.sh
         unset CONTAINER_CACHE
@@ -308,7 +308,7 @@ def test_no_cache_exits_0_on_sigterm() -> None:
     """
     _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
     script = textwrap.dedent(f"""\
-        cd {SRC_DIR}
+        cd '{SRC_DIR}'
         {_log_stubs}
         source backoff.sh
         unset CONTAINER_CACHE
