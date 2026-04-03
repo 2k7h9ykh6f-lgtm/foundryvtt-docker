@@ -61,7 +61,7 @@ backoff_on_failure() {
 
   # ── Kubernetes bypass ──────────────────────────────────────────────────────
   if [[ -n "${KUBERNETES_SERVICE_HOST:-}" ]]; then
-    log "Kubernetes environment detected.  Skipping backoff and exiting immediately."
+    log "Kubernetes environment detected.  Skipping backoff — CrashLoopBackOff will handle restart throttling."
     return
   fi
 
