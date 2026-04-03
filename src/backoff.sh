@@ -138,11 +138,24 @@ backoff_on_failure() {
   fi
 
   # Write updated state file atomically.
+  # If the write or rename fails (disk full, read-only volume, etc.), fall back
+  # to the no-cache indefinite sleep so a broken write doesn't silently degrade
+  # into a rapid restart loop.
   local timestamp
   timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  printf '{"consecutive_failures":%d,"last_failure_timestamp":"%s"}\n' \
-    "${n}" "${timestamp}" > "${tmp_file}"
-  mv "${tmp_file}" "${state_file}"
+  if ! printf '{"consecutive_failures":%d,"last_failure_timestamp":"%s"}\n' \
+    "${n}" "${timestamp}" > "${tmp_file}" \
+    || ! mv "${tmp_file}" "${state_file}"; then
+    log_error "Failed to write backoff state file '${state_file}'.  Falling back to indefinite sleep."
+    rm -f "${tmp_file}" 2> /dev/null
+    sleep infinity &
+    backoff_sleep_pid=$!
+    log_debug "backoff_on_failure: indefinite sleep (write failure) pid=${backoff_sleep_pid}"
+    wait "${backoff_sleep_pid}" || true
+    backoff_sleep_pid=""
+    trap - EXIT
+    exit 0
+  fi
   log_debug "backoff_on_failure: wrote state file ${state_file} (consecutive_failures=${n})"
 
   # Sleep in background so SIGTERM can interrupt it (skip if no delay).
