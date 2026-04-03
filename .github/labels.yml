@@ -1,5 +1,8 @@
 ---
 ## more info https://github.com/crazy-max/ghaction-github-labeler
+- name: "ansible :scroll:"
+  color: e60000
+  description: ""
 - name: "automerge :bell:"
   color: 8f4fbc
   description: ""
@@ -54,6 +57,9 @@
 - name: "needs more info :thinking:"
   color: 795548
   description: ""
+- name: "packer :package:"
+  color: 02a8ef
+  description: ""
 - name: "pinned :pushpin:"
   color: 28008e
   description: ""
@@ -66,14 +72,29 @@
 - name: "regression :boom:"
   color: cd8703
   description: ""
+- name: "shell script :shell:"
+  color: 89e051
+  description: ""
 - name: "sponsor :sparkling_heart:"
   color: fedbf0
   description: ""
 - name: "stale :skull:"
   color: 237da0
   description: ""
+- name: "terraform :cloud:"
+  color: 7b42bc
+  description: ""
+- name: "test :test_tube:"
+  color: f9d0c4
+  description: ""
+- name: "typescript :blue_book:"
+  color: 3178c6
+  description: ""
 - name: "upstream :eyes:"
   color: fbca04
+  description: ""
+- name: "version bump :bookmark:"
+  color: 0e8a16
   description: ""
 - name: "wontfix :coffin:"
   color: ffffff

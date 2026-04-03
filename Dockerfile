@@ -1,9 +1,16 @@
-ARG CONTAINER_VERSION=13.351.0
-ARG FOUNDRY_RELEASE_URL
-ARG FOUNDRY_VERSION=13.351
-ARG NODE_IMAGE_VERSION=22-bookworm-slim
+# syntax=docker/dockerfile:1
 
-FROM public.ecr.aws/docker/library/node:${NODE_IMAGE_VERSION} AS compile-typescript-stage
+ARG CONTAINER_VERSION=14.359.0
+ARG FOUNDRY_RELEASE_URL
+ARG FOUNDRY_VERSION=14.359
+ARG NODE_IMAGE_VERSION=24-trixie-slim
+ARG NPM_VERSION=11.12.1
+
+FROM public.ecr.aws/docker/library/node:${NODE_IMAGE_VERSION} AS base
+ARG NPM_VERSION
+RUN npm install -g npm@${NPM_VERSION}
+
+FROM base AS compile-typescript-stage
 
 WORKDIR /root
 
@@ -12,12 +19,12 @@ COPY \
   package-lock.json \
   tsconfig.json \
   ./
-RUN npm install && npm install --global typescript
+RUN npm install && npx tsc --version
 COPY /src/*.ts src/
-RUN tsc
+RUN npx tsc
 RUN grep -l "#!" dist/*.js | xargs chmod a+x
 
-FROM public.ecr.aws/docker/library/node:${NODE_IMAGE_VERSION} AS optional-release-stage
+FROM base AS optional-release-stage
 
 # This stage is optional and will only be executed if the FOUNDRY_RELEASE_URL or
 # FOUNDRY_USERNAME and FOUNDRY_PASSWORD secrets are provided.  It will download
@@ -58,7 +65,7 @@ RUN \
   unzip -d "dist/resources/app" ${ARCHIVE}; \
   fi
 
-FROM public.ecr.aws/docker/library/node:${NODE_IMAGE_VERSION} AS final-stage
+FROM base AS final-stage
 
 ARG CONTAINER_VERSION
 ARG FOUNDRY_VERSION
@@ -78,12 +85,14 @@ COPY --from=compile-typescript-stage /root/dist/ .
 COPY \
   package.json \
   package-lock.json \
+  src/backoff.sh \
   src/check_health.sh \
   src/entrypoint.sh \
   src/launcher.sh \
   src/logging.sh \
   ./
 RUN mkdir -p resources /data \
+  && chmod a+rx /home/node \
   && chmod a+rwx resources /data \
   && apt-get update && apt-get install -y \
   curl \
@@ -94,7 +103,9 @@ RUN mkdir -p resources /data \
   tzdata \
   unzip \
   && rm -rf /var/lib/apt/lists/* \
-  && npm install && echo ${CONTAINER_VERSION} > image_version.txt
+  && npm install && echo ${CONTAINER_VERSION} > image_version.txt \
+  && npm uninstall -g npm \
+  && rm -rf /usr/local/lib/node_modules/npm
 
 VOLUME ["/data"]
 # HTTP Server

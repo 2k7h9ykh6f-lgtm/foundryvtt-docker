@@ -5,9 +5,10 @@
 # and Lineage processes these changes.
 
 version: 2
+
 updates:
-  - directory: /
-    package-ecosystem: docker
+  - package-ecosystem: docker
+    directory: /
     schedule:
       interval: daily
     labels:
@@ -16,6 +17,20 @@ updates:
       - "docker :whale:"
     groups:
       docker-all:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: daily
+    labels:
+      - "bot :robot:"
+      - "dependencies :game_die:"
+      - "docker :whale:"
+    groups:
+      docker-compose-all:
         applies-to: version-updates
         patterns:
           - "*"

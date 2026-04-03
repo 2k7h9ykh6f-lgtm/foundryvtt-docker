@@ -16,6 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Games/Entertainment :: Role-Playing",
 ]
 dependencies = ["semver"]
@@ -33,7 +34,15 @@ issues = "https://github.com/felddy/foundryvtt-docker/issues"
 source = "https://github.com/felddy/foundryvtt-docker"
 
 [project.optional-dependencies]
-test = ["coverage", "coveralls", "docker", "pre-commit", "pytest", "pytest-cov"]
+test = [
+    "coverage",
+    "coveralls",
+    "docker",
+    "hypothesis",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+]
 
 [tool.setuptools.dynamic]
 version = { file = "src/version.txt" }
