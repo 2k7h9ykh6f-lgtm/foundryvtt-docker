@@ -123,12 +123,15 @@ backoff_on_failure() {
 
   # Compute delay = min(10 * 2^(n-2), 960), with n=1 (first failure) exiting
   # immediately (delay=0) so the operator sees the error without waiting.
+  # Cap the shift operand at 7 (n=9 → 960s) to avoid undefined behaviour from
+  # large bit shifts when consecutive_failures grows very large.
   local delay
   if ((n <= 1)); then
     delay=0
+  elif ((n >= 9)); then
+    delay=960
   else
     delay=$((10 * (1 << (n - 2))))
-    ((delay > 960)) && delay=960
   fi
 
   if ((delay == 0)); then
