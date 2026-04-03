@@ -18,6 +18,8 @@ backoff_sleep_pid=""
 # backoff_reset
 #   Delete ${CONTAINER_CACHE}/backoff_state.json if it exists; no-op otherwise.
 backoff_reset() {
+  # Disable errexit — this runs from an EXIT trap and must not re-trigger it.
+  set +e
   local state_file="${CONTAINER_CACHE:-}/backoff_state.json"
   log_debug "backoff_reset: CONTAINER_CACHE='${CONTAINER_CACHE:-}'"
   if [[ -n "${CONTAINER_CACHE:-}" && -f "${state_file}" ]]; then
@@ -27,6 +29,7 @@ backoff_reset() {
   else
     log_debug "backoff_reset: no state file to remove (file absent or no cache dir)."
   fi
+  set -e
 }
 
 # backoff_on_failure <exit_code>
@@ -47,6 +50,9 @@ backoff_reset() {
 #     Sleep $delay in background (interruptible by SIGTERM).
 #     Exit with original <exit_code>.
 backoff_on_failure() {
+  # Disable errexit for the entire function — this runs from an EXIT trap and
+  # any unexpected command failure must not re-trigger the trap.
+  set +e
   local exit_code="${1}"
 
   log_debug "backoff_on_failure: called with exit_code=${exit_code}"
