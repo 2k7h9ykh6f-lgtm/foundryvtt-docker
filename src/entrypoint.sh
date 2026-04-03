@@ -36,7 +36,7 @@ trap_sigterm() {
     log_debug "Sending TERM signal to child pid: ${child_pid}"
     kill -TERM "$child_pid" 2> /dev/null
   else
-    log_warn "Child pid: ${child_pid} exited before we could sent TERM signal."
+    log_warn "Child pid: ${child_pid} exited before we could send TERM signal."
   fi
   # Interrupt any in-progress backoff sleep subprocess
   if [[ -n "${backoff_sleep_pid:-}" ]]; then
