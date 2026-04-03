@@ -207,7 +207,7 @@ if [ $install_required = true ]; then
   fi
 
   # If CONTAINER_CACHE is null, set it to a default.
-  # If it set to an empty string, disable the caching.
+  # If it is set to an empty string, disable the caching.
   CONTAINER_CACHE="${CONTAINER_CACHE-${DATA_DIR}/container_cache}"
 
   if [[ "${CONTAINER_CACHE:-}" ]]; then
