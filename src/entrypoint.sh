@@ -22,6 +22,9 @@ source backoff.sh
 
 # Flag set by trap_sigterm so trap_exit knows the exit was operator-initiated.
 _sigterm_received=false
+# Initialised empty; assigned after launcher.sh is backgrounded.
+# trap_sigterm guards against the race where SIGTERM arrives before assignment.
+child_pid=""
 
 # trap_sigterm — TERM signal handler.
 # Forwards SIGTERM to the launcher child process and interrupts any in-progress
@@ -31,12 +34,16 @@ _sigterm_received=false
 trap_sigterm() {
   log_warn "TERM signal received.  Shutting down server."
   _sigterm_received=true
-  # Only attempt to terminate if the child process is still running
-  if kill -0 "$child_pid" 2> /dev/null; then
-    log_debug "Sending TERM signal to child pid: ${child_pid}"
-    kill -TERM "$child_pid" 2> /dev/null
+  # Guard against the race where SIGTERM arrives before child_pid is assigned.
+  if [[ -n "${child_pid:-}" ]]; then
+    if kill -0 "${child_pid}" 2> /dev/null; then
+      log_debug "Sending TERM signal to child pid: ${child_pid}"
+      kill -TERM "${child_pid}" 2> /dev/null
+    else
+      log_warn "Child pid: ${child_pid} exited before we could send TERM signal."
+    fi
   else
-    log_warn "Child pid: ${child_pid} exited before we could send TERM signal."
+    log_warn "TERM received before child process was started."
   fi
   # Interrupt any in-progress backoff sleep subprocess
   if [[ -n "${backoff_sleep_pid:-}" ]]; then
