@@ -192,10 +192,11 @@ def test_backoff_reset_noop_when_no_state_file(tmp_path: Path) -> None:
 
 
 def test_corrupt_state_file_resets_to_n1(tmp_path: Path) -> None:
-    """A corrupt state file is treated as consecutive_failures=0, so n=1 → 10s delay.
+    """A corrupt state file is treated as consecutive_failures=0.
 
     Verified by checking the state file written after the call: consecutive_failures
-    should be 1 (meaning it started from 0 and incremented once).
+    should be 1 (meaning it started from 0 and incremented once). With n=1 the
+    delay is 0, so the first failure after a corrupt state exits without sleeping.
     Validates: Requirements 1.1
     """
     state_file = tmp_path / "backoff_state.json"
