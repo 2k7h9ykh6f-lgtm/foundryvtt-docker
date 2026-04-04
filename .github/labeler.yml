@@ -12,6 +12,7 @@
   - changed-files:
       - any-glob-to-any-file:
           - "**/ansible/**"
+
 "dependencies :game_die:":
   - changed-files:
       - any-glob-to-any-file:
@@ -19,32 +20,39 @@
           - "**/Pipfile*"
           - .pre-commit-config.yaml
           - requirements*.txt
+
 "docker :whale:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/compose*.yml"
           - "**/docker-compose*.yml"
           - "**/Dockerfile*"
+
 "documentation :memo:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.md"
+
 "github-actions :octocat:":
   - changed-files:
       - any-glob-to-any-file:
           - .github/workflows/**
+
 "javascript :coffee:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.js"
+
 "packer :package:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.pkr.hcl"
+
 "python :snake:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.py"
+
 "shell script :shell:":
   - changed-files:
       - any-glob-to-any-file:
@@ -53,10 +61,12 @@
           - "**/*.sh"
           - bump-version
           - setup-env
+
 "terraform :cloud:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.tf"
+
 "test :test_tube:":
   - changed-files:
       - any-glob-to-any-file:
@@ -70,14 +80,17 @@
           - compose.yml
           - pytest.ini
           - tests/**
+
 "typescript :blue_book:":
   - changed-files:
       - any-glob-to-any-file:
           - "**/*.ts"
+
 "upstream :eyes:":
   - head-branch:
       # Any Lineage pull requests should use this branch.
       - lineage/skeleton
+
 "version bump :bookmark:":
   - changed-files:
       - any-glob-to-any-file:
