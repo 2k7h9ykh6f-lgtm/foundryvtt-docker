@@ -366,9 +366,6 @@ wheels = [
 [[package]]
 name = "foundryvtt-docker"
 source = { editable = "." }
-dependencies = [
-    { name = "semver" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -383,6 +380,7 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "semver" },
 ]
 test = [
     { name = "coverage" },
@@ -395,7 +393,6 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "semver" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -408,6 +405,7 @@ dev = [
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "semver" },
 ]
 test = [
     { name = "coverage" },
