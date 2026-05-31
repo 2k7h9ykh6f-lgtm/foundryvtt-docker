@@ -28,7 +28,12 @@ def _is_allowed(env_var_name: str) -> bool:
         "HTTPS_PROXY",
         "ALL_PROXY",
         "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
         "CUSTOM_PROXY",
+        "custom_proxy",
     ],
 )
 def test_proxy_env_vars_are_allowlisted(env_var_name: str) -> None:
