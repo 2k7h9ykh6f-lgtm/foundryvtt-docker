@@ -123,9 +123,18 @@ async function fetchReleaseURL(
         const presigned_url: string | null = jsonData.url;
         logger.debug(`Presigned URL: ${presigned_url}`);
 
+        // Validate the URL is non-null and non-empty before returning.
+        if (!presigned_url) {
+            logger.warn(
+                `Response contained an empty or null URL for build ${build}.`,
+            );
+            continue;
+        }
+
         return presigned_url;
     }
-    throw new Error(`Failed to fetch release URL.`);
+    logger.error(`Failed to fetch release URL after ${1 + retries} attempt(s).`);
+    return null;
 }
 
 /**
@@ -152,18 +161,20 @@ async function main(): Promise<number> {
     cookieJar = new CookieJar(new FileCookieStore(cookiejar_filename));
     fetch = fetchCookie(nodeFetch, cookieJar);
 
-    // Extract build number from FoundryVTT version
-    // FoundryVTT versions looks like x.yyy where y is a build
-    const foundry_build: string | undefined = foundry_version.split(".").pop();
-
-    if (!foundry_build) {
+    // Validate version format: must be "generation.build" (e.g. "14.363").
+    const version_pattern = /^\d+\.\d+$/;
+    if (!version_pattern.test(foundry_version)) {
         logger.error(
-            `Unable to extract build number from version: ${foundry_version}`,
+            `Invalid version format: "${foundry_version}". ` +
+                `Expected "generation.build" (e.g. "14.363").`,
         );
-        throw new Error(
-            `Unable to extract build number from version: ${foundry_version}`,
-        );
+        process.exitCode = 1;
+        return 1;
     }
+
+    // Extract build number from FoundryVTT version.
+    // FoundryVTT versions look like x.yyy where y is a build number.
+    const foundry_build: string = foundry_version.split(".")[1];
 
     // Generate a presigned URL and print it to stdout.
     const releaseURL: string | null = await fetchReleaseURL(
@@ -176,7 +187,7 @@ async function main(): Promise<number> {
         return 0;
     } else {
         logger.error("Could not fetch a release URL.");
-        return -1;
+        return 2;
     }
 }
 

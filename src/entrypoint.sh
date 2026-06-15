@@ -15,25 +15,6 @@ LOG_NAME="Entrypoint"
 
 # shellcheck source=src/logging.sh
 source logging.sh
-
-# Export unified log level for child processes (Node.js scripts, launcher.sh).
-# logging.sh already resolved _LOG_LEVEL_NUM; now export the string form.
-if [[ -z "${CONTAINER_LOG_LEVEL:-}" ]]; then
-  if [[ "${CONTAINER_VERBOSE:-}" ]]; then
-    export CONTAINER_LOG_LEVEL="debug"
-  else
-    export CONTAINER_LOG_LEVEL="info"
-  fi
-else
-  export CONTAINER_LOG_LEVEL
-fi
-
-# Set curl verbose flag based on resolved log level
-_CURL_VERBOSE=""
-if [[ $_LOG_LEVEL_NUM -ge 4 ]]; then
-  _CURL_VERBOSE="--verbose"
-fi
-
 # shellcheck source=src/backoff.sh
 source backoff.sh
 
@@ -106,7 +87,7 @@ for deprecated_env in $DEPRECATED_ENVS; do
 done
 
 log "Starting felddy/foundryvtt container v${image_version}"
-log_debug "Debug logging enabled. (CONTAINER_LOG_LEVEL=${CONTAINER_LOG_LEVEL})"
+log_debug "CONTAINER_VERBOSE set.  Debug logging enabled."
 log_debug "Running as: $(id)"
 log_debug "Environment:\n$(env | sort | sed -E 's/(.*PASSWORD|KEY.*)=.*/\1=[REDACTED]/g')"
 log_debug "Data directory: ${DATA_DIR}"
@@ -181,55 +162,27 @@ if [ -f "${secret_file}" ]; then
   FOUNDRY_USERNAME=${secret_username:-${FOUNDRY_USERNAME:-}}
 fi
 
-# Check to see if an install is required
-install_required=false
-if [ -f "resources/app/package.json" ]; then
-  # FoundryVTT no longer supports the "version" field in package.json
-  # We need to build up a pseudo-version using the generation and build values
-  installed_version=$(jq --raw-output '.release | "\(.generation).\(.build)"' resources/app/package.json)
-  log "Foundry Virtual Tabletop ${installed_version} is installed."
-  if [ "${FOUNDRY_VERSION}" != "${installed_version}" ]; then
-    log "Requested version (${FOUNDRY_VERSION}) from FOUNDRY_VERSION differs."
-    log "Uninstalling version ${installed_version}."
-    rm -r resources
-    install_required=true
-  fi
-else
-  log "No Foundry Virtual Tabletop installation detected."
-  install_required=true
+# shellcheck source=src/resolve_release.sh
+source resolve_release.sh
+
+# Validate FOUNDRY_VERSION format before proceeding.
+if ! validate_version_format "${FOUNDRY_VERSION}"; then
+  exit ${RESOLVE_ERR_INVALID_VERSION}
 fi
+
+# Check to see if an install is required
+install_required=$(check_installed_version "${FOUNDRY_VERSION}" ".")
 
 # Install FoundryVTT if needed
 if [ $install_required = true ]; then
-  # Determine how we are going to get the release URL
-  if [ "${FOUNDRY_RELEASE_URL:-}" ]; then
-    log "Using FOUNDRY_RELEASE_URL to download release."
-    presigned_url="${FOUNDRY_RELEASE_URL}"
-  fi
-  if [[ "${FOUNDRY_USERNAME:-}" && "${FOUNDRY_PASSWORD:-}" ]]; then
-    log "Using FOUNDRY_USERNAME and FOUNDRY_PASSWORD to authenticate."
-    # If credentials are provided attempt authentication.
-    # The resulting cookiejar is used to get a release URL or license.
+  # Resolve the presigned URL using the unified resolver.
+  set +e
+  presigned_url=$(resolve_presigned_url "${cookiejar_file}" "${node_user_agent}" "${FOUNDRY_VERSION}")
+  resolve_exit_code=$?
+  set -e
 
-    # Temporarily disable errexit to capture failure from authenticate.js
-    set +e
-    ./authenticate.js \
-      --user-agent="${node_user_agent}" \
-      "${FOUNDRY_USERNAME}" "${FOUNDRY_PASSWORD}" "${cookiejar_file}"
-    auth_exit_code=$?
-    set -e
-
-    if [ ${auth_exit_code} -ne 0 ]; then
-      log_warn "Authentication failed with exit code ${auth_exit_code}."
-      rm -f "${cookiejar_file}"
-    elif [[ ! "${presigned_url:-}" ]]; then
-      # If the presigned_url wasn't set by FOUNDRY_RELEASE_URL generate one now.
-      log "Using authenticated credentials to fetch release URL."
-      presigned_url=$(./get_release_url.js \
-        ${CONTAINER_URL_FETCH_RETRY+--retry=${CONTAINER_URL_FETCH_RETRY}} \
-        --user-agent="${node_user_agent}" \
-        "${cookiejar_file}" "${FOUNDRY_VERSION}")
-    fi
+  if [ ${resolve_exit_code} -ne 0 ]; then
+    log_warn "Unable to resolve a release URL."
   fi
 
   # If CONTAINER_CACHE is null, set it to a default.
@@ -261,7 +214,7 @@ END_OF_LINE
     set +e
     # Download release if newer than cached version.
     # Filter out warnings about bad date formats if the file is missing.
-    curl ${_CURL_VERBOSE} --fail --location \
+    curl ${CONTAINER_VERBOSE+--verbose} --fail --location \
       --user-agent "${curl_user_agent}" \
       --time-cond "${release_filename}" \
       --output "${downloading_filename}" "${presigned_url}" 2>&1 \
@@ -327,7 +280,7 @@ END_OF_LINE
     log_error "Either set FOUNDRY_RELEASE_URL."
     log_error "Or set FOUNDRY_USERNAME and FOUNDRY_PASSWORD."
     log_error "Or set CONTAINER_CACHE to a directory containing foundryvtt-${FOUNDRY_VERSION}.zip"
-    exit 1
+    exit ${RESOLVE_ERR_NO_URL}
   fi
 
   if [[ "${CONTAINER_CACHE:-}" ]]; then
@@ -374,7 +327,7 @@ END_OF_LINE
     for url in ${CONTAINER_PATCH_URLS}; do
       log "Downloading patch from URL: $url"
       patch_file=$(mktemp -t patch_url.sh.XXXXXX)
-      curl ${_CURL_VERBOSE} --silent --location \
+      curl ${CONTAINER_VERBOSE+--verbose} --silent --location \
         --user-agent "${curl_user_agent}" \
         --output "${patch_file}" "${url}"
       log_debug "Sourcing patch file: ${patch_file}"
@@ -423,14 +376,15 @@ if [ ! -f "${LICENSE_FILE}" ]; then
     log "Attempting to fetch license key from authenticated account."
     if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
       # FOUNDRY_LICENSE_KEY can be an index, try passing it.
+      # CONTAINER_VERBOSE default value should not be quoted.
       # shellcheck disable=SC2086
-      fetched_license_key=$(./get_license.js \
+      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
         --user-agent="${node_user_agent}" \
         --select="${FOUNDRY_LICENSE_KEY}" \
         "${cookiejar_file}")
     else
       # shellcheck disable=SC2086
-      fetched_license_key=$(./get_license.js \
+      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
         --user-agent="${node_user_agent}" \
         "${cookiejar_file}")
     fi
