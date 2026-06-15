@@ -15,6 +15,25 @@ LOG_NAME="Entrypoint"
 
 # shellcheck source=src/logging.sh
 source logging.sh
+
+# Export unified log level for child processes (Node.js scripts, launcher.sh).
+# logging.sh already resolved _LOG_LEVEL_NUM; now export the string form.
+if [[ -z "${CONTAINER_LOG_LEVEL:-}" ]]; then
+  if [[ "${CONTAINER_VERBOSE:-}" ]]; then
+    export CONTAINER_LOG_LEVEL="debug"
+  else
+    export CONTAINER_LOG_LEVEL="info"
+  fi
+else
+  export CONTAINER_LOG_LEVEL
+fi
+
+# Set curl verbose flag based on resolved log level
+_CURL_VERBOSE=""
+if [[ $_LOG_LEVEL_NUM -ge 4 ]]; then
+  _CURL_VERBOSE="--verbose"
+fi
+
 # shellcheck source=src/backoff.sh
 source backoff.sh
 
@@ -87,7 +106,7 @@ for deprecated_env in $DEPRECATED_ENVS; do
 done
 
 log "Starting felddy/foundryvtt container v${image_version}"
-log_debug "CONTAINER_VERBOSE set.  Debug logging enabled."
+log_debug "Debug logging enabled. (CONTAINER_LOG_LEVEL=${CONTAINER_LOG_LEVEL})"
 log_debug "Running as: $(id)"
 log_debug "Environment:\n$(env | sort | sed -E 's/(.*PASSWORD|KEY.*)=.*/\1=[REDACTED]/g')"
 log_debug "Data directory: ${DATA_DIR}"
@@ -194,7 +213,7 @@ if [ $install_required = true ]; then
 
     # Temporarily disable errexit to capture failure from authenticate.js
     set +e
-    ./authenticate.js ${CONTAINER_VERBOSE+--log-level=debug} \
+    ./authenticate.js \
       --user-agent="${node_user_agent}" \
       "${FOUNDRY_USERNAME}" "${FOUNDRY_PASSWORD}" "${cookiejar_file}"
     auth_exit_code=$?
@@ -206,7 +225,7 @@ if [ $install_required = true ]; then
     elif [[ ! "${presigned_url:-}" ]]; then
       # If the presigned_url wasn't set by FOUNDRY_RELEASE_URL generate one now.
       log "Using authenticated credentials to fetch release URL."
-      presigned_url=$(./get_release_url.js ${CONTAINER_VERBOSE+--log-level=debug} \
+      presigned_url=$(./get_release_url.js \
         ${CONTAINER_URL_FETCH_RETRY+--retry=${CONTAINER_URL_FETCH_RETRY}} \
         --user-agent="${node_user_agent}" \
         "${cookiejar_file}" "${FOUNDRY_VERSION}")
@@ -242,7 +261,7 @@ END_OF_LINE
     set +e
     # Download release if newer than cached version.
     # Filter out warnings about bad date formats if the file is missing.
-    curl ${CONTAINER_VERBOSE+--verbose} --fail --location \
+    curl ${_CURL_VERBOSE} --fail --location \
       --user-agent "${curl_user_agent}" \
       --time-cond "${release_filename}" \
       --output "${downloading_filename}" "${presigned_url}" 2>&1 \
@@ -355,7 +374,7 @@ END_OF_LINE
     for url in ${CONTAINER_PATCH_URLS}; do
       log "Downloading patch from URL: $url"
       patch_file=$(mktemp -t patch_url.sh.XXXXXX)
-      curl ${CONTAINER_VERBOSE+--verbose} --silent --location \
+      curl ${_CURL_VERBOSE} --silent --location \
         --user-agent "${curl_user_agent}" \
         --output "${patch_file}" "${url}"
       log_debug "Sourcing patch file: ${patch_file}"
@@ -404,15 +423,14 @@ if [ ! -f "${LICENSE_FILE}" ]; then
     log "Attempting to fetch license key from authenticated account."
     if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
       # FOUNDRY_LICENSE_KEY can be an index, try passing it.
-      # CONTAINER_VERBOSE default value should not be quoted.
       # shellcheck disable=SC2086
-      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
+      fetched_license_key=$(./get_license.js \
         --user-agent="${node_user_agent}" \
         --select="${FOUNDRY_LICENSE_KEY}" \
         "${cookiejar_file}")
     else
       # shellcheck disable=SC2086
-      fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
+      fetched_license_key=$(./get_license.js \
         --user-agent="${node_user_agent}" \
         "${cookiejar_file}")
     fi
