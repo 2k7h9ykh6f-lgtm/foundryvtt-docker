@@ -6,7 +6,11 @@ Log into Foundry Virtual Tabletop website, and save cookies to file.
 EXIT STATUS
     This utility exits with one of the following values:
     0   Login completed successfully.
-    >0  An error occurred.
+    1   Retriable error (transient network failure, HTTP 5xx).
+        The caller should retry after a backoff period.
+    2   Non-retriable authentication error (invalid credentials, HTTP 4xx,
+        CSRF token missing).  The caller should NOT retry — credentials or
+        site state must be fixed.
 
 Usage:
   authenticate.js [options] <username> <password> <cookiejar>
@@ -45,6 +49,26 @@ const LOCAL_DOMAIN = "felddy.com";
 const LOGIN_URL = BASE_URL + "/auth/login/";
 const USERNAME_RE = /\/community\/(?<username>.+)/;
 
+// Exit codes — keep in sync with backoff.sh and entrypoint.sh.
+const EXIT_SUCCESS = 0;
+const EXIT_RETRY = 1;
+const EXIT_FATAL_AUTH = 2;
+
+/**
+ * AuthError — error with a retriable flag so callers can classify exit codes.
+ * retriable=true  → transient (network, 5xx); caller uses EXIT_RETRY.
+ * retriable=false → permanent (bad credentials, 4xx); caller uses EXIT_FATAL_AUTH.
+ */
+class AuthError extends Error {
+    constructor(
+        message: string,
+        public readonly retriable: boolean,
+    ) {
+        super(message);
+        this.name = "AuthError";
+    }
+}
+
 const HEADERS: Headers = new Headers({
     DNT: "1",
     Referer: BASE_URL,
@@ -67,15 +91,21 @@ async function fetchTokens(): Promise<string> {
         method: "GET",
     });
     if (!response.ok) {
-        throw new Error(`Unexpected response ${response.statusText}`);
+        throw new AuthError(
+            `[RETRY] Unexpected response ${response.status} ${response.statusText}`,
+            true,
+        );
     }
     const body = await response.text();
     const $ = cheerio.load(body);
 
     const token = $('input[name="csrfmiddlewaretoken"]').attr("value")?.trim();
     if (!token) {
-        logger.error("Could not find the CSRF middleware token.");
-        throw new Error("Could not find the CSRF middleware token.");
+        logger.error("[RETRY] Could not find the CSRF middleware token.");
+        throw new AuthError(
+            "[RETRY] Could not find the CSRF middleware token.",
+            true,
+        );
     }
     return token;
 }
@@ -109,7 +139,10 @@ async function login(
         agent: AGENT,
     });
     if (!response.ok) {
-        throw new Error(`Unexpected response ${response.statusText}`);
+        throw new AuthError(
+            `[RETRY] Unexpected response ${response.status} ${response.statusText}`,
+            true,
+        );
     }
     const body = await response.text();
     const $ = await cheerio.load(body);
@@ -121,10 +154,11 @@ async function login(
     });
     if (!session_cookie) {
         logger.error(
-            `Unable to log in as ${username}, verify your credentials...`,
+            `[FATAL_AUTH] Unable to log in as ${username}, verify your credentials...`,
         );
-        throw new Error(
-            `Unable to log in as ${username}, verify your credentials...`,
+        throw new AuthError(
+            `[FATAL_AUTH] Unable to log in as ${username}, verify your credentials...`,
+            false,
         );
     }
 
@@ -132,13 +166,21 @@ async function login(
     const communityURL: string | undefined = $("#login-welcome a").attr("href");
     logger.debug(`Community URL: ${communityURL}`);
     if (!communityURL) {
-        logger.error("Could not find the community URL.");
-        throw new Error("Could not find the community URL.");
+        logger.error("[FATAL_AUTH] Could not find the community URL.");
+        throw new AuthError(
+            "[FATAL_AUTH] Could not find the community URL.",
+            false,
+        );
     }
     const match = communityURL.match(USERNAME_RE);
     if (!match?.groups?.username) {
-        logger.error(`Unable to resolve username from ${communityURL}`);
-        throw new Error(`Unable to resolve username from ${communityURL}`);
+        logger.error(
+            `[FATAL_AUTH] Unable to resolve username from ${communityURL}`,
+        );
+        throw new AuthError(
+            `[FATAL_AUTH] Unable to resolve username from ${communityURL}`,
+            false,
+        );
     }
     const loggedInUsername = match.groups.username;
     logger.info(`Successfully logged in as: ${loggedInUsername}`);
@@ -190,11 +232,19 @@ async function main(): Promise<number> {
             username_cookie!.toString(),
             `http://${LOCAL_DOMAIN}`,
         );
-    } catch (err: any) {
-        logger.error(`Unable to authenticate: ${err.message}`);
-        return -1;
+    } catch (err: unknown) {
+        if (err instanceof AuthError) {
+            // AuthError carries the retriable flag; the originating function
+            // already logged a classified message so we only trace here.
+            logger.debug(`Authentication error classified: ${err.message}`);
+            return err.retriable ? EXIT_RETRY : EXIT_FATAL_AUTH;
+        }
+        // Unwrapped network-level errors (ECONNREFUSED, DNS, timeout) are retriable.
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error(`[RETRY] Unable to authenticate: ${message}`);
+        return EXIT_RETRY;
     }
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 (async () => {

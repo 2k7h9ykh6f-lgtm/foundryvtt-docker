@@ -3,17 +3,49 @@
 # backoff.sh — sourceable bash library providing exponential backoff functions.
 # Source this file from entrypoint.sh before use.
 #
+# Exit-code convention (shared with get_license.js, authenticate.js,
+# get_release_url.js, and entrypoint.sh):
+#
+#   0  SUCCESS      — reset backoff state
+#   1  RETRY        — transient/retriable failure; exponential backoff
+#   2  FATAL_AUTH   — credential/authentication failure; sleep indefinitely
+#   3  FATAL_CONFIG — configuration/resource error; sleep indefinitely
+#
+# Codes ≥ 2 are "fatal": the container cannot self-heal, so backoff is
+# replaced with an indefinite sleep that blocks rapid restart loops until the
+# operator intervenes (or SIGTERM arrives for a clean shutdown).
+#
 # Exposes:
 #   backoff_reset              — delete the failure state file on successful startup
 #   backoff_on_failure <code>  — sleep with exponential backoff then exit <code>
 #   backoff_sleep_pid          — PID of the background sleep (if any); kill from
 #                                trap_sigterm to interrupt the sleep promptly
+#   is_fatal_exit_code <code>  — returns 0 (true) if <code> is fatal (≥ 2)
+#   fatal_category_name <code> — human-readable category label for <code>
 #
 # Depends on logging.sh being sourced by the caller before this file.
 
 # PID of any in-progress background sleep subprocess.
 # entrypoint.sh's trap_sigterm kills this PID to interrupt the sleep promptly.
 backoff_sleep_pid=""
+
+# is_fatal_exit_code <exit_code>
+#   Returns 0 (true) when the exit code indicates a non-retriable failure
+#   (FATAL_AUTH=2 or FATAL_CONFIG=3), 1 (false) otherwise.
+is_fatal_exit_code() {
+  local code="${1}"
+  [[ "${code}" -ge 2 ]]
+}
+
+# fatal_category_name <exit_code>
+#   Returns a human-readable label for a fatal exit code.
+fatal_category_name() {
+  case "${1}" in
+    2) echo "FATAL_AUTH" ;;
+    3) echo "FATAL_CONFIG" ;;
+    *) echo "FATAL_UNKNOWN(code=${1})" ;;
+  esac
+}
 
 # backoff_reset
 #   Delete ${CONTAINER_CACHE}/backoff_state.json if it exists; no-op otherwise.
@@ -65,6 +97,27 @@ backoff_on_failure() {
   if [[ -n "${KUBERNETES_SERVICE_HOST:-}" ]]; then
     log "Kubernetes environment detected.  Skipping backoff — CrashLoopBackOff will handle restart throttling."
     return
+  fi
+
+  # ── Fatal (non-retriable) failure ───────────────────────────────────────────
+  # Codes 2 (FATAL_AUTH) and 3 (FATAL_CONFIG) indicate errors the container
+  # cannot self-heal.  Skip exponential backoff entirely and sleep indefinitely
+  # so the operator sees the error once and the container stays quiet until
+  # manual intervention or SIGTERM.
+  if is_fatal_exit_code "${exit_code}"; then
+    local category
+    category=$(fatal_category_name "${exit_code}")
+    log_error "Non-retriable failure (exit code ${exit_code}, ${category}).  Manual intervention required."
+    log_warn "Sleeping indefinitely.  Send SIGTERM to shut down."
+
+    sleep infinity &
+    backoff_sleep_pid=$!
+    log_debug "backoff_on_failure: fatal indefinite sleep pid=${backoff_sleep_pid}"
+    wait "${backoff_sleep_pid}" || true
+    backoff_sleep_pid=""
+
+    trap - EXIT
+    exit 0
   fi
 
   # ── No cache directory ─────────────────────────────────────────────────────
@@ -137,9 +190,9 @@ backoff_on_failure() {
   fi
 
   if ((delay == 0)); then
-    log_warn "Failure ${n} detected (exit code ${exit_code}).  Exiting immediately."
+    log_warn "[RETRY] Failure ${n} detected (exit code ${exit_code}).  Exiting immediately."
   else
-    log_warn "Failure ${n} detected (exit code ${exit_code}).  Waiting ${delay}s before exiting."
+    log_warn "[RETRY] Failure ${n} detected (exit code ${exit_code}).  Waiting ${delay}s before exiting."
   fi
 
   # Write updated state file atomically.
