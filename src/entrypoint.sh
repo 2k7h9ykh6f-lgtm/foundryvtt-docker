@@ -15,6 +15,8 @@ LOG_NAME="Entrypoint"
 
 # shellcheck source=src/logging.sh
 source logging.sh
+# shellcheck source=src/cache.sh
+source cache.sh
 # shellcheck source=src/backoff.sh
 source backoff.sh
 
@@ -213,28 +215,20 @@ if [ $install_required = true ]; then
     fi
   fi
 
-  # If CONTAINER_CACHE is null, set it to a default.
-  # If it is set to an empty string, disable the caching.
-  CONTAINER_CACHE="${CONTAINER_CACHE-${DATA_DIR}/container_cache}"
+  # Initialize the download cache directory (resolves default, validates
+  # permissions, cleans stale files, writes CACHEDIR.TAG).
+  # If CONTAINER_CACHE is explicitly set to empty string, caching is disabled.
+  cache_init
 
-  if [[ "${CONTAINER_CACHE:-}" ]]; then
-    log "Using CONTAINER_CACHE: ${CONTAINER_CACHE}"
-    mkdir -p "${CONTAINER_CACHE}"
-    # Create a cache marker file in the cache directory.
-    cat << END_OF_LINE > "${CONTAINER_CACHE}/CACHEDIR.TAG"
-Signature: $(printf ".IsCacheDirectory" | md5sum | cut -d ' ' -f 1)
-# This file is a cache directory tag created by the felddy/foundryvtt container
-# https://github.com/felddy/foundryvtt-docker
-# For information about cache directory tags see https://bford.info/cachedir/
-END_OF_LINE
+  # Build filenames.  When caching is disabled (CONTAINER_CACHE is empty),
+  # cache_prefix is empty so files land in the current working directory.
+  if [[ -n "${CONTAINER_CACHE:-}" ]]; then
+    cache_prefix="${CONTAINER_CACHE}/"
   else
-    log_warn "CONTAINER_CACHE has been unset.  Release caching is disabled."
+    cache_prefix=""
   fi
-
-  set +o nounset
-  downloading_filename="${CONTAINER_CACHE%%+(/)}${CONTAINER_CACHE:+/}downloading.zip"
-  release_filename="${CONTAINER_CACHE%%+(/)}${CONTAINER_CACHE:+/}foundryvtt-${FOUNDRY_VERSION}.zip"
-  set -o nounset
+  downloading_filename="${cache_prefix}downloading.zip"
+  release_filename="${cache_prefix}foundryvtt-${FOUNDRY_VERSION}.zip"
 
   if [[ "${presigned_url:-}" ]]; then
     log "Downloading Foundry Virtual Tabletop release."
@@ -312,38 +306,7 @@ END_OF_LINE
   fi
 
   if [[ "${CONTAINER_CACHE:-}" ]]; then
-    log "Preserving release archive file in cache."
-    # Check if CONTAINER_CACHE_SIZE is set and if so, ensure it's greater than 0
-    if [[ -n "${CONTAINER_CACHE_SIZE:-}" ]]; then
-      if ! [[ "${CONTAINER_CACHE_SIZE}" -gt 0 ]] 2> /dev/null; then
-        log_error "If set, CONTAINER_CACHE_SIZE must be 1 or greater.  Found: ${CONTAINER_CACHE_SIZE}"
-        exit 1
-      fi
-
-      log "Cleaning up cache directory: ${CONTAINER_CACHE}"
-      log "Keeping ${CONTAINER_CACHE_SIZE} latest versions."
-      # Initialize counter
-      cache_files_removed_count=0
-
-      # Store the list of cache files to remove
-      file_list=$(find "${CONTAINER_CACHE}" -maxdepth 1 -name 'foundryvtt-*.zip' \
-        | sort -Vr \
-        | awk -v keep="${CONTAINER_CACHE_SIZE}" 'NR > keep')
-
-      # Iterate over the file list
-      if [ -n "$file_list" ]; then
-        for file in $file_list; do
-          log_warn "Removing: $file"
-          rm -f "$file"
-          cache_files_removed_count=$((cache_files_removed_count + 1))
-        done
-        log "Completed cache cleanup. Removed ${cache_files_removed_count} files."
-      else
-        log "No cache cleanup was necessary."
-      fi
-    else
-      log_debug "CONTAINER_CACHE_SIZE is not set. Skipping cache cleanup."
-    fi
+    cache_prune
   else
     log "Deleting release archive file."
     rm "${release_filename}"
