@@ -1,0 +1,98 @@
+---
+# Each entry in this file is a label that will be applied to pull requests
+# if there is a match based on the matching rules for the entry. Please see
+# the actions/labeler documentation for more information:
+# https://github.com/actions/labeler#match-object
+#
+# Note: Verify that the label you want to use is defined in the
+# crazy-max/ghaction-github-labeler configuration file located at
+# .github/labels.yml.
+
+"ansible :scroll:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/ansible/**"
+
+"dependencies :game_die:":
+  - changed-files:
+      - any-glob-to-any-file:
+          # Add any dependency files used.
+          - "**/Pipfile*"
+          - .pre-commit-config.yaml
+          - requirements*.txt
+
+"docker :whale:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/compose*.yml"
+          - "**/docker-compose*.yml"
+          - "**/Dockerfile*"
+
+"documentation :memo:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+
+"github-actions :octocat:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/workflows/**
+
+"javascript :coffee:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.js"
+
+"packer :package:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.pkr.hcl"
+
+"python :snake:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.py"
+
+"shell script :shell:":
+  - changed-files:
+      - any-glob-to-any-file:
+          # If this project has any shell scripts that do not end in the ".sh"
+          # extension, add them below.
+          - "**/*.sh"
+          - bump-version
+          - setup-env
+
+"terraform :cloud:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.tf"
+
+"test :test_tube:":
+  - changed-files:
+      - any-glob-to-any-file:
+          # Add any test-related files or paths.
+          - .ansible-lint
+          - .bandit.yml
+          - .flake8
+          - .isort.cfg
+          - .mdl_config.yaml
+          - .yamllint
+          - compose.yml
+          - pytest.ini
+          - tests/**
+
+"typescript :blue_book:":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.ts"
+
+"upstream :eyes:":
+  - head-branch:
+      # Any Lineage pull requests should use this branch.
+      - lineage/skeleton
+
+"version bump :bookmark:":
+  - changed-files:
+      - any-glob-to-any-file:
+          # Ensure this matches your version tracking file(s).
+          - src/version.txt
