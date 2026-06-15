@@ -1,0 +1,42 @@
+---
+name: sync-labels
+
+on: # yamllint disable-line rule:truthy
+  push:
+    paths:
+      - .github/labels.yml
+      - .github/workflows/sync-labels.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    name: Run Diagnostics
+    uses: felddy/reusable-workflows/.github/workflows/diagnostics.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+  labeler:
+    needs:
+      - diagnostics
+    permissions:
+      # actions/checkout needs this to fetch code
+      contents: read
+      # crazy-max/ghaction-github-labeler needs this to manage repository labels
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # tag=v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag=v6.0.2
+      - name: Sync repository labels
+        if: success()
+        uses: crazy-max/ghaction-github-labeler@548a7c3603594ec17c819e1239f281a3b801ab4d # tag=v6.0.0
+        with:
+          # This is a hideous ternary equivalent so we only do a dry run unless
+          # this workflow is triggered by the develop branch.
+          dry-run: ${{ github.ref_name == 'develop' && 'false' || 'true' }}
