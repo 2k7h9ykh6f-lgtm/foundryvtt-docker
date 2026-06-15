@@ -21,9 +21,9 @@ services:
       # - CONTAINER_PRESERVE_CONFIG=false
       # - CONTAINER_UMASK=
       # - CONTAINER_URL_FETCH_RETRY=0
-      # - CONTAINER_VERBOSE=
+      # - CONTAINER_VERBOSE=true
       # - FOUNDRY_AWS_CONFIG=
-      # - FOUNDRY_COMPRESS_WEBSOCKET=false
+      # - FOUNDRY_COMPRESS_WEBSOCKET=true
       # - FOUNDRY_CSS_THEME=dark
       # - |
       #   FOUNDRY_DEMO_CONFIG={
@@ -34,13 +34,13 @@ services:
       # - FOUNDRY_DELETE_NEDB=false
       # - FOUNDRY_HOSTNAME=
       # - FOUNDRY_HOT_RELOAD=false
-      # - FOUNDRY_IP_DISCOVERY=true
-      # - FOUNDRY_LANGUAGE=en.core
+      # - FOUNDRY_IP_DISCOVERY=
+      # - FOUNDRY_LANGUAGE=
       # - FOUNDRY_LICENSE_KEY=
       # - FOUNDRY_LOCAL_HOSTNAME=
       # - FOUNDRY_LOG_SIZE=
       # - FOUNDRY_MAX_LOGS=
-      # - FOUNDRY_MINIFY_STATIC_FILES=false
+      # - FOUNDRY_MINIFY_STATIC_FILES=
       # - FOUNDRY_NO_BACKUPS=false
       # - FOUNDRY_PASSWORD_SALT=
       # - FOUNDRY_PROTOCOL=
@@ -58,7 +58,6 @@ services:
       # - FOUNDRY_UPNP_LEASE_DURATION=
       # - FOUNDRY_VERSION=14.363
       # - FOUNDRY_WORLD=
-      # - TZ=UTC
     ports:
       - target: 30000
         published: 30000

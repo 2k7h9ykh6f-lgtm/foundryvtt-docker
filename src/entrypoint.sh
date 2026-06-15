@@ -162,60 +162,6 @@ if [ -f "${secret_file}" ]; then
   FOUNDRY_USERNAME=${secret_username:-${FOUNDRY_USERNAME:-}}
 fi
 
-# ── Pre-flight validation ──────────────────────────────────────────────────────
-# Validate configuration early so misconfigurations fail fast with clear messages.
-
-# FOUNDRY_VERSION must be set and non-empty.
-if [[ -z "${FOUNDRY_VERSION:-}" ]]; then
-  log_error "FOUNDRY_VERSION is not set or is empty."
-  log_error "This variable is required to determine which release to install."
-  exit 1
-fi
-
-# FOUNDRY_SSL_CERT and FOUNDRY_SSL_KEY must be set together.
-if [[ "${FOUNDRY_SSL_CERT:-}" && ! "${FOUNDRY_SSL_KEY:-}" ]]; then
-  log_error "FOUNDRY_SSL_CERT is set but FOUNDRY_SSL_KEY is not."
-  log_error "Both must be configured to enable SSL, or leave both unset."
-  exit 1
-fi
-if [[ "${FOUNDRY_SSL_KEY:-}" && ! "${FOUNDRY_SSL_CERT:-}" ]]; then
-  log_error "FOUNDRY_SSL_KEY is set but FOUNDRY_SSL_CERT is not."
-  log_error "Both must be configured to enable SSL, or leave both unset."
-  exit 1
-fi
-
-# CONTAINER_CACHE_SIZE must be a positive integer if set.
-if [[ -n "${CONTAINER_CACHE_SIZE:-}" ]]; then
-  if ! [[ "${CONTAINER_CACHE_SIZE}" -gt 0 ]] 2> /dev/null; then
-    log_error "If set, CONTAINER_CACHE_SIZE must be 1 or greater.  Found: ${CONTAINER_CACHE_SIZE}"
-    exit 1
-  fi
-fi
-
-# At least one installation method must be potentially available.
-# This check runs before the install block to provide a clear error message.
-# CONTAINER_CACHE with a pre-downloaded zip is validated here by file existence.
-# Only checked when installation will actually be needed.
-if [[ ! -f "resources/app/package.json" ]] || \
-   [[ "$(jq --raw-output '.release | "\(.generation).\(.build)"' resources/app/package.json 2>/dev/null)" != "${FOUNDRY_VERSION}" ]]; then
-  if [[ ! "${FOUNDRY_RELEASE_URL:-}" ]] && \
-     [[ ! "${FOUNDRY_USERNAME:-}" || ! "${FOUNDRY_PASSWORD:-}" ]]; then
-    # No URL or credentials. The only remaining option is a cached release.
-    _preflight_cache="${CONTAINER_CACHE-${DATA_DIR}/container_cache}"
-    _preflight_expected_zip="foundryvtt-${FOUNDRY_VERSION}.zip"
-    if [[ -z "${_preflight_cache}" ]] || \
-       [[ ! -f "${_preflight_cache}/${_preflight_expected_zip}" ]]; then
-      log_error "No installation method available."
-      log_error "Provide one of the following to install a Foundry distribution:"
-      log_error "  1. Set FOUNDRY_RELEASE_URL to a presigned download URL."
-      log_error "  2. Set FOUNDRY_USERNAME and FOUNDRY_PASSWORD for authentication."
-      log_error "  3. Place ${_preflight_expected_zip} in CONTAINER_CACHE (${_preflight_cache:-disabled})."
-      exit 1
-    fi
-  fi
-fi
-# ─────────────────────────────────────────────────────────────────────────────
-
 # Check to see if an install is required
 install_required=false
 if [ -f "resources/app/package.json" ]; then

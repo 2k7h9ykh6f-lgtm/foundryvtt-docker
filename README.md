@@ -41,7 +41,6 @@ container can install and license your server.
 docker run \
   --env FOUNDRY_USERNAME='<your_username>' \
   --env FOUNDRY_PASSWORD='<your_password>' \
-  --hostname my_foundry_host \
   --publish 30000:30000/tcp \
   --volume <your_data_dir>:/data \
   ghcr.io/felddy/foundryvtt:14
@@ -66,7 +65,6 @@ page on the Foundry website.
 ```console
 docker run \
   --env FOUNDRY_RELEASE_URL='<temporary_url>' \
-  --hostname my_foundry_host \
   --publish 30000:30000/tcp \
   --volume <your_data_dir>:/data \
   ghcr.io/felddy/foundryvtt:14

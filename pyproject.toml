@@ -40,7 +40,6 @@ test = [
     "docker",
     "hypothesis",
     "pre-commit",
-    "pyyaml",
     "pytest",
     "pytest-cov",
 ]
