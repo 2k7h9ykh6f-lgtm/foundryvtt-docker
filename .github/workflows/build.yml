@@ -1,0 +1,206 @@
+---
+name: Build
+
+on: # yamllint disable-line rule:truthy
+  merge_group:
+    types:
+      - checks_requested
+  pull_request:
+  push:
+    branches:
+      - develop
+      - develop-*
+  release:
+    types:
+      - edited
+      - published
+  schedule:
+    - cron: 0 10 * * * # everyday at 10am
+  workflow_dispatch:
+
+# Set a default shell for any run steps. The `-Eueo pipefail` sets errtrace,
+# nounset, errexit, and pipefail. The `-x` will print all commands as they are
+# run. Please see the GitHub Actions documentation for more information:
+# https://docs.github.com/en/actions/using-jobs/setting-default-values-for-jobs
+defaults:
+  run:
+    shell: bash -Eueo pipefail -x {0}
+
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+  security-events: write
+
+jobs:
+  diagnostics:
+    name: Diagnostics
+    uses: felddy/reusable-workflows/.github/workflows/diagnostics.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+
+  config:
+    name: Config
+    uses: ./.github/workflows/_config.yml
+
+  lint:
+    name: Lint
+    uses: felddy/reusable-workflows/.github/workflows/common-lint.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+
+  build:
+    name: Build and Publish Container
+    needs:
+      - config
+      - lint
+      - diagnostics
+    # Skip registry-pushing jobs on fork PRs — secrets are unavailable and
+    # GITHUB_TOKEN is read-only, so pushes would fail with auth errors.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: felddy/reusable-workflows/.github/workflows/container-build.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    with:
+      platforms: ${{ needs.config.outputs.platforms }}
+      image-name: ${{ needs.config.outputs.image_name }}
+      context: .
+      dockerfile: ./Dockerfile
+      scan-severity: CRITICAL,HIGH
+
+  build-preinstalled:
+    name: Build and Publish Container Pre-Installed
+    needs:
+      - config
+      - lint
+      - diagnostics
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    uses: felddy/reusable-workflows/.github/workflows/container-build.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    with:
+      build-secret-1-name: foundry_password
+      build-secret-2-name: foundry_username
+      cache-scope: preinstall # prevent preinstall from skipping from regular build cache
+      platforms: ${{ needs.config.outputs.test_platforms }}
+      image-name: ${{ needs.config.outputs.image_name_preinstall }}
+      context: .
+      dockerfile: ./Dockerfile
+      scan-severity: "" # don't fail on vulns in FoundryVTT binaries
+      upload-scan-results: false # don't pollute repo security tab with third-party vulns
+    secrets:
+      private-package-token: ${{ secrets.PRIVATE_PACKAGE_TOKEN }}
+      build-secret-1: ${{ secrets.FOUNDRY_PASSWORD }}
+      build-secret-2: ${{ secrets.FOUNDRY_USERNAME }}
+
+  test:
+    name: Test Container
+    needs:
+      - config
+      - build
+    uses: felddy/reusable-workflows/.github/workflows/container-test.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    with:
+      image-name: ${{ needs.config.outputs.image_name }}
+      platforms: ${{ needs.config.outputs.test_platforms }}
+      test-secret-1-name: FOUNDRY_USERNAME
+      test-secret-2-name: FOUNDRY_PASSWORD
+    secrets:
+      test-secret-1: ${{ secrets.FOUNDRY_USERNAME }}
+      test-secret-2: ${{ secrets.FOUNDRY_PASSWORD }}
+
+  test-preinstalled:
+    name: Test Container Pre-Installed
+    needs:
+      - config
+      - build-preinstalled
+    uses: felddy/reusable-workflows/.github/workflows/container-test.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    with:
+      image-name: ${{ needs.config.outputs.image_name_preinstall }}
+      platforms: ${{ needs.config.outputs.test_platforms }}
+    secrets:
+      registry-token: ${{ secrets.PRIVATE_PACKAGE_TOKEN }}
+
+  publish-manifest:
+    name: Publish Manifest
+    needs:
+      - config
+      - build
+      - test
+      - test-preinstalled
+    uses: felddy/reusable-workflows/.github/workflows/container-publish-manifest.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    with:
+      image-name: ${{ needs.config.outputs.image_name }}
+      platforms: ${{ needs.config.outputs.platforms }}
+
+  publish-manifest-preinstalled:
+    name: Publish Manifest Pre-Installed
+    needs:
+      - config
+      - build-preinstalled
+      - test
+      - test-preinstalled
+    uses: felddy/reusable-workflows/.github/workflows/container-publish-manifest.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    with:
+      image-name: ${{ needs.config.outputs.image_name_preinstall }}
+      platforms: ${{ needs.config.outputs.test_platforms }}
+    secrets:
+      private-package-token: ${{ secrets.PRIVATE_PACKAGE_TOKEN }}
+
+  mirror-to-dockerhub:
+    name: Mirror images to DockerHub
+    needs:
+      - publish-manifest
+      - publish-manifest-preinstalled
+      - config
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    permissions:
+      contents: read
+      packages: read
+    uses: felddy/reusable-workflows/.github/workflows/container-mirror.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    with:
+      image_name: ${{ needs.config.outputs.image_name }}
+      image_tag_names: ${{ needs.publish-manifest.outputs.image-tag-names }}
+      target_registry: docker.io
+    secrets:
+      target-registry-username: ${{ secrets.DOCKER_USERNAME }}
+      target-registry-password: ${{ secrets.DOCKER_PASSWORD }}
+
+  publish-readme:
+    name: Publish docs to DockerHub
+    needs:
+      - publish-manifest
+      - publish-manifest-preinstalled
+      - config
+    if: |
+      github.event_name == 'release' &&
+      !github.event.release.prerelease &&
+      needs.publish-manifest.outputs.is-latest == 'true'
+    uses: felddy/reusable-workflows/.github/workflows/dockerhub-description.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+    with:
+      image_name: ${{ needs.config.outputs.image_name }}
+    secrets:
+      docker_password: ${{ secrets.DOCKER_PASSWORD }}
+      docker_username: ${{ secrets.DOCKER_USERNAME }}
