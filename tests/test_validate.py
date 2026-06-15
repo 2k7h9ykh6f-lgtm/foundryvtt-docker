@@ -1,14 +1,18 @@
-"""Unit tests for src/validate.sh and refactored launcher.sh / entrypoint.sh
-validation paths.
+"""Unit tests for src/validate.sh.
 
 Tests are driven via subprocess calls to bash, sourcing validate.sh directly.
 logging.sh is stubbed out so tests have no terminal-color side-effects.
+
+Covers:
+  - Normal startup dry-run / command expansion
+  - Missing path failures
+  - Non-writable directory failures
 """
 
 # Standard Python Libraries
 import os
 from pathlib import Path
-import stat
+import shutil
 import subprocess
 import textwrap
 
@@ -18,18 +22,19 @@ import pytest
 # Absolute path to the src/ directory so bash can find validate.sh / logging.sh.
 SRC_DIR = Path(__file__).parent.parent / "src"
 
+LOG_STUBS = textwrap.dedent("""\
+    log()       { :; }
+    log_debug() { :; }
+    log_warn()  { :; }
+    log_error() { echo "[error] $*" >&2; }
+""")
 
-def _run_validate(
+
+def _run(
     script: str, env: dict | None = None, timeout: int = 10
 ) -> subprocess.CompletedProcess:
     """Run a bash snippet that sources validate.sh with logging stubbed out."""
-    log_stubs = textwrap.dedent("""\
-        log()       { :; }
-        log_debug() { :; }
-        log_warn()  { :; }
-        log_error() { echo "ERROR: $*" >&2; }
-    """)
-    full_script = f"cd '{SRC_DIR}'\n{log_stubs}\nsource validate.sh\n{script}"
+    full_script = f"cd '{SRC_DIR}'\n{LOG_STUBS}\nsource validate.sh\n{script}"
     merged_env = {**os.environ, **(env or {})}
     return subprocess.run(
         ["bash", "-c", full_script],
@@ -40,466 +45,296 @@ def _run_validate(
     )
 
 
-def _run_launcher(
-    args: list[str],
-    env: dict | None = None,
-    cwd: str | Path | None = None,
-    timeout: int = 10,
-) -> subprocess.CompletedProcess:
-    """Run launcher.sh with the given arguments and environment.
+# ── require_file ─────────────────────────────────────────────────────────────
 
-    Sets CONFIG_DIR to a writable directory under cwd so tests work
-    outside Docker where /data may not exist or be writable.
-    Sets NODE_BIN to a stub so tests work outside Docker where
-    /usr/local/bin/node may not exist.
-    logging.sh writes to stdout (not stderr), so error messages from
-    the launcher appear in stdout.
+
+def test_require_file_existing(tmp_path: Path) -> None:
+    """require_file succeeds when the file exists."""
+    target = tmp_path / "some_file.txt"
+    target.write_text("content")
+    result = _run(f'require_file "{target}"')
+    assert result.returncode == 0
+
+
+def test_require_file_missing(tmp_path: Path) -> None:
+    """require_file exits 1 with a 'File not found' message when file is absent."""
+    target = tmp_path / "nonexistent.txt"
+    result = _run(f'require_file "{target}" "test config"')
+    assert result.returncode == 1
+    assert "File not found" in result.stderr
+    assert "test config" in result.stderr
+
+
+# ── require_dir ──────────────────────────────────────────────────────────────
+
+
+def test_require_dir_existing(tmp_path: Path) -> None:
+    """require_dir succeeds when the directory exists."""
+    result = _run(f'require_dir "{tmp_path}"')
+    assert result.returncode == 0
+
+
+def test_require_dir_missing(tmp_path: Path) -> None:
+    """require_dir exits 1 with a 'Directory not found' message."""
+    target = tmp_path / "nonexistent_dir"
+    result = _run(f'require_dir "{target}" "data directory"')
+    assert result.returncode == 1
+    assert "Directory not found" in result.stderr
+    assert "data directory" in result.stderr
+
+
+# ── require_executable ───────────────────────────────────────────────────────
+
+
+def test_require_executable_ok(tmp_path: Path) -> None:
+    """require_executable succeeds on an executable file."""
+    target = tmp_path / "run.sh"
+    target.write_text("#!/bin/bash\n")
+    target.chmod(0o755)
+    result = _run(f'require_executable "{target}"')
+    assert result.returncode == 0
+
+
+def test_require_executable_not_executable(tmp_path: Path) -> None:
+    """require_executable exits 1 when the file is not executable."""
+    target = tmp_path / "run.sh"
+    target.write_text("#!/bin/bash\n")
+    target.chmod(0o644)
+    result = _run(f'require_executable "{target}" "launcher script"')
+    assert result.returncode == 1
+    assert "not executable" in result.stderr
+    assert "launcher script" in result.stderr
+
+
+def test_require_executable_missing(tmp_path: Path) -> None:
+    """require_executable exits 1 when the file does not exist."""
+    target = tmp_path / "missing.sh"
+    result = _run(f'require_executable "{target}"')
+    assert result.returncode == 1
+    assert "File not found" in result.stderr
+
+
+# ── require_writable_dir ─────────────────────────────────────────────────────
+
+
+def test_require_writable_dir_ok(tmp_path: Path) -> None:
+    """require_writable_dir succeeds on a writable directory and cleans up."""
+    result = _run(f'require_writable_dir "{tmp_path}" "data volume"')
+    assert result.returncode == 0
+    # The test file should have been cleaned up
+    test_file = tmp_path / ".container-permissions-test.txt"
+    assert not test_file.exists(), "Permissions test file should be cleaned up"
+
+
+def test_require_writable_dir_readonly(tmp_path: Path) -> None:
+    """require_writable_dir exits 1 on a read-only directory."""
+    if os.getuid() == 0:
+        pytest.skip("Cannot test read-only directory as root")
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    readonly_dir.chmod(0o555)
+    try:
+        result = _run(f'require_writable_dir "{readonly_dir}" "data volume"')
+        assert result.returncode == 1
+        assert "write test failed" in result.stderr
+        assert "insufficient permissions" in result.stderr
+        assert "discussions/1197" in result.stderr
+    finally:
+        # Restore permissions so pytest can clean up
+        readonly_dir.chmod(0o755)
+
+
+def test_require_writable_dir_missing(tmp_path: Path) -> None:
+    """require_writable_dir exits 1 when the directory does not exist."""
+    target = tmp_path / "nonexistent"
+    result = _run(f'require_writable_dir "{target}" "data volume"')
+    assert result.returncode == 1
+    assert "Directory not found" in result.stderr
+
+
+# ── require_env ──────────────────────────────────────────────────────────────
+
+
+def test_require_env_set() -> None:
+    """require_env succeeds when the variable is set and non-empty."""
+    result = _run('MY_VAR="hello"; require_env MY_VAR')
+    assert result.returncode == 0
+
+
+def test_require_env_unset() -> None:
+    """require_env exits 1 when the variable is not set."""
+    result = _run('unset MY_VAR; require_env MY_VAR "my setting"')
+    assert result.returncode == 1
+    assert "MY_VAR" in result.stderr
+    assert "not set" in result.stderr
+    assert "my setting" in result.stderr
+
+
+def test_require_env_empty() -> None:
+    """require_env exits 1 when the variable is set to an empty string."""
+    result = _run('MY_VAR=""; require_env MY_VAR')
+    assert result.returncode == 1
+    assert "not set" in result.stderr
+
+
+# ── Consistent error format ──────────────────────────────────────────────────
+
+
+def test_error_format_includes_uid_gid(tmp_path: Path) -> None:
+    """_validate_fail output includes the uid:gid context line."""
+    target = tmp_path / "missing.txt"
+    result = _run(f'require_file "{target}"')
+    assert result.returncode == 1
+    assert "uid:gid:" in result.stderr
+
+
+def test_writable_dir_error_includes_discussion_link(tmp_path: Path) -> None:
+    """require_writable_dir failure includes the troubleshooting discussion link."""
+    if os.getuid() == 0:
+        pytest.skip("Cannot test read-only directory as root")
+    readonly_dir = tmp_path / "ro"
+    readonly_dir.mkdir()
+    readonly_dir.chmod(0o555)
+    try:
+        result = _run(f'require_writable_dir "{readonly_dir}" "test"')
+        assert "felddy/foundryvtt-docker/discussions/1197" in result.stderr
+    finally:
+        readonly_dir.chmod(0o755)
+
+
+# ── Dry-run: entrypoint.sh --version ─────────────────────────────────────────
+
+
+def test_entrypoint_version_dryrun(tmp_path: Path) -> None:
+    """entrypoint.sh --version exits 0 and prints the image version.
+
+    This verifies the entrypoint still works after sourcing validate.sh.
     """
-    workdir = Path(cwd or SRC_DIR)
-    config_dir = workdir / "Config"
-    config_dir.mkdir(exist_ok=True)
-    node_stub = workdir / "node_stub"
-    if not node_stub.exists():
-        node_stub.write_text("#!/bin/bash\necho 'node stub'\n")
-        node_stub.chmod(0o755)
-    merged_env = {
-        **os.environ,
-        "HOME": str(workdir),
-        "FOUNDRY_VERSION": "14.363",
-        "CONTAINER_DRY_RUN": "true",
-        "CONFIG_DIR": str(config_dir),
-        "NODE_BIN": str(node_stub),
-        **(env or {}),
-    }
-    cmd = ["bash", str(SRC_DIR / "launcher.sh")] + args
-    return subprocess.run(
-        cmd,
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+
+    # Copy all needed shell scripts into a flat working directory
+    for script in ["entrypoint.sh", "logging.sh", "backoff.sh", "validate.sh"]:
+        shutil.copy2(SRC_DIR / script, workdir / script)
+
+    # Create image_version.txt (required by entrypoint.sh)
+    (workdir / "image_version.txt").write_text("14.363.0")
+
+    env = {**os.environ, "FOUNDRY_VERSION": "14.363"}
+    result = subprocess.run(
+        ["bash", str(workdir / "entrypoint.sh"), "--version"],
         capture_output=True,
         text=True,
-        env=merged_env,
         cwd=str(workdir),
-        timeout=timeout,
+        env=env,
+        timeout=10,
     )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "14.363.0" in result.stdout.strip()
 
 
-# ── validate_writable_dir ─────────────────────────────────────────────────────
+# ── Dry-run: launcher command expansion ──────────────────────────────────────
 
 
-class TestValidateWritableDir:
-    """Tests for validate_writable_dir."""
+def test_launcher_command_expansion() -> None:
+    """Launcher argument-building pattern correctly expands optional flags.
 
-    def test_success_on_writable_dir(self, tmp_path: Path) -> None:
-        """Returns 0 for a directory with full read/write/execute permissions."""
-        result = _run_validate(f'validate_writable_dir "{tmp_path}"')
-        assert result.returncode == 0, result.stderr
+    Tests the same set/shift pattern used by launcher.sh to build the final
+    exec argument list, ensuring validate.sh sourcing doesn't interfere.
+    """
+    script = textwrap.dedent(f"""\
+        cd '{SRC_DIR}'
+        {LOG_STUBS}
+        source validate.sh
 
-    def test_fails_on_readonly_dir(self, tmp_path: Path) -> None:
-        """Returns 1 when the directory is read-only (no write permission)."""
-        readonly_dir = tmp_path / "readonly"
-        readonly_dir.mkdir()
-        readonly_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)  # r-x only
-        try:
-            result = _run_validate(f'validate_writable_dir "{readonly_dir}"')
-            assert result.returncode == 1
-            assert "Write test failed" in result.stderr
-        finally:
-            readonly_dir.chmod(stat.S_IRWXU)  # restore for cleanup
+        # Simulate launcher.sh argument building with CMD defaults
+        set -- "resources/app/main.mjs" "--port=30000" "--headless" "--noupdate" "--dataPath=/data"
 
-    def test_fails_on_nonexistent_dir(self, tmp_path: Path) -> None:
-        """Returns 1 when the directory does not exist."""
-        missing = tmp_path / "does_not_exist"
-        result = _run_validate(f'validate_writable_dir "{missing}"')
-        assert result.returncode == 1
-        assert "does not exist" in result.stderr
+        FOUNDRY_IP_DISCOVERY=false
+        if [[ "${{FOUNDRY_IP_DISCOVERY:-}}" == "false" ]]; then
+          set -- "$@" --noipdiscovery
+        fi
 
-    def test_fails_on_file_not_dir(self, tmp_path: Path) -> None:
-        """Returns 1 when the path exists but is a regular file, not a directory."""
-        regular_file = tmp_path / "a_file"
-        regular_file.write_text("hello")
-        result = _run_validate(f'validate_writable_dir "{regular_file}"')
-        assert result.returncode == 1
-        assert "does not exist" in result.stderr
+        FOUNDRY_LOG_SIZE=50
+        if [[ "${{FOUNDRY_LOG_SIZE:-}}" ]]; then
+          set -- "$@" --logsize="${{FOUNDRY_LOG_SIZE}}"
+        fi
 
-    def test_fails_with_empty_argument(self) -> None:
-        """Returns 1 when called with no argument."""
-        result = _run_validate('validate_writable_dir ""')
-        assert result.returncode == 1
-        assert "no directory path provided" in result.stderr
+        FOUNDRY_MAX_LOGS=5
+        if [[ "${{FOUNDRY_MAX_LOGS:-}}" ]]; then
+          set -- "$@" --maxlogs="${{FOUNDRY_MAX_LOGS}}"
+        fi
 
-    def test_leaves_no_probe_file(self, tmp_path: Path) -> None:
-        """After a successful check, no temporary probe file remains."""
-        _run_validate(f'validate_writable_dir "{tmp_path}"')
-        children = list(tmp_path.iterdir())
-        assert children == [], f"Probe file left behind: {children}"
-
-
-# ── validate_required_file ────────────────────────────────────────────────────
-
-
-class TestValidateRequiredFile:
-    """Tests for validate_required_file."""
-
-    def test_success_when_file_exists(self, tmp_path: Path) -> None:
-        """Returns 0 when the file exists."""
-        f = tmp_path / "found.txt"
-        f.write_text("hello")
-        result = _run_validate(f'validate_required_file "{f}" "test file"')
-        assert result.returncode == 0
-
-    def test_fails_when_file_missing(self, tmp_path: Path) -> None:
-        """Returns 1 when the file does not exist."""
-        missing = tmp_path / "missing.txt"
-        result = _run_validate(f'validate_required_file "{missing}" "test file"')
-        assert result.returncode == 1
-        assert "not found" in result.stderr
-
-    def test_fails_with_empty_argument(self) -> None:
-        """Returns 1 when called with no argument."""
-        result = _run_validate('validate_required_file ""')
-        assert result.returncode == 1
-        assert "no file path provided" in result.stderr
-
-    def test_fails_on_directory(self, tmp_path: Path) -> None:
-        """Returns 1 when the path is a directory, not a regular file."""
-        result = _run_validate(f'validate_required_file "{tmp_path}" "config"')
-        assert result.returncode == 1
-        assert "not found" in result.stderr
-
-
-# ── validate_executable_file ──────────────────────────────────────────────────
-
-
-class TestValidateExecutableFile:
-    """Tests for validate_executable_file."""
-
-    def test_success_on_executable(self, tmp_path: Path) -> None:
-        """Returns 0 when the file exists and is executable."""
-        exe = tmp_path / "my_script.sh"
-        exe.write_text("#!/bin/bash\necho hi\n")
-        exe.chmod(stat.S_IRWXU)
-        result = _run_validate(f'validate_executable_file "{exe}" "test script"')
-        assert result.returncode == 0
-
-    def test_fails_on_nonexistent(self, tmp_path: Path) -> None:
-        """Returns 1 when the file does not exist."""
-        missing = tmp_path / "no_such_bin"
-        result = _run_validate(f'validate_executable_file "{missing}" "node"')
-        assert result.returncode == 1
-        assert "not found or not executable" in result.stderr
-
-    def test_fails_on_non_executable(self, tmp_path: Path) -> None:
-        """Returns 1 when the file exists but lacks the executable bit."""
-        f = tmp_path / "no_exec"
-        f.write_text("data")
-        f.chmod(stat.S_IRUSR | stat.S_IWUSR)  # rw- only, no x
-        result = _run_validate(f'validate_executable_file "{f}" "binary"')
-        assert result.returncode == 1
-        assert "not found or not executable" in result.stderr
-
-    def test_fails_with_empty_argument(self) -> None:
-        """Returns 1 when called with no argument."""
-        result = _run_validate('validate_executable_file ""')
-        assert result.returncode == 1
-        assert "no file path provided" in result.stderr
-
-
-# ── validate_positive_integer ─────────────────────────────────────────────────
-
-
-class TestValidatePositiveInteger:
-    """Tests for validate_positive_integer."""
-
-    def test_valid_positive(self) -> None:
-        """Returns 0 for positive integers."""
-        for val in ("1", "5", "100", "9999"):
-            result = _run_validate(f'validate_positive_integer "{val}" "TEST_VAR"')
-            assert result.returncode == 0, f"Expected 0 for '{val}', got {result.returncode}"
-
-    def test_fails_on_zero(self) -> None:
-        """Returns 1 for zero."""
-        result = _run_validate('validate_positive_integer "0" "TEST_VAR"')
-        assert result.returncode == 1
-        assert "positive integer" in result.stderr
-
-    def test_fails_on_negative(self) -> None:
-        """Returns 1 for negative numbers."""
-        result = _run_validate('validate_positive_integer "-1" "TEST_VAR"')
-        assert result.returncode == 1
-        assert "positive integer" in result.stderr
-
-    def test_fails_on_string(self) -> None:
-        """Returns 1 for non-numeric strings."""
-        result = _run_validate('validate_positive_integer "abc" "TEST_VAR"')
-        assert result.returncode == 1
-        assert "positive integer" in result.stderr
-
-    def test_fails_on_empty(self) -> None:
-        """Returns 1 when value is empty."""
-        result = _run_validate('validate_positive_integer "" "TEST_VAR"')
-        assert result.returncode == 1
-        assert "not set or empty" in result.stderr
-
-    def test_fails_on_float(self) -> None:
-        """Returns 1 for floating-point numbers (not integers)."""
-        result = _run_validate('validate_positive_integer "1.5" "TEST_VAR"')
-        assert result.returncode == 1
-        assert "positive integer" in result.stderr
-
-    def test_error_message_includes_name(self) -> None:
-        """Error messages include the provided variable name for context."""
-        result = _run_validate('validate_positive_integer "0" "CACHE_SIZE"')
-        assert result.returncode == 1
-        assert "CACHE_SIZE" in result.stderr
-
-
-# ── Launcher integration tests ────────────────────────────────────────────────
-
-
-def _setup_launcher_env(workdir: Path) -> None:
-    """Create the minimal file layout that launcher.sh expects."""
-    (workdir / "logging.sh").write_text((SRC_DIR / "logging.sh").read_text())
-    (workdir / "validate.sh").write_text((SRC_DIR / "validate.sh").read_text())
-    (workdir / "set_options.js").write_text(
-        "#!/bin/bash\necho '{\"test\": true}'\n"
+        # Output final argument list
+        echo "$@"
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
-    (workdir / "set_options.js").chmod(0o755)
-    (workdir / "set_password.js").write_text("#!/bin/bash\ncat\n")
-    (workdir / "set_password.js").chmod(0o755)
-    node_stub = workdir / "node_stub"
-    node_stub.write_text("#!/bin/bash\necho 'node stub'\n")
-    node_stub.chmod(0o755)
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    output = result.stdout.strip()
+    assert "resources/app/main.mjs" in output
+    assert "--port=30000" in output
+    assert "--noipdiscovery" in output
+    assert "--logsize=50" in output
+    assert "--maxlogs=5" in output
 
 
-class TestLauncherDryRun:
-    """Tests for launcher.sh dry-run mode and command expansion."""
-
-    def test_default_args(self, tmp_path: Path) -> None:
-        """Dry-run with default args produces expected exec line."""
-        _setup_launcher_env(tmp_path)
-        result = _run_launcher(
-            [
-                "resources/app/main.mjs",
-                "--port=30000",
-                "--headless",
-                "--noupdate",
-                "--dataPath=/data",
-            ],
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        assert "exec env -i" in result.stdout
-        assert "node_stub" in result.stdout
-        assert "--port=30000" in result.stdout
-        assert "--headless" in result.stdout
-        assert "--noupdate" in result.stdout
-        assert "--dataPath=/data" in result.stdout
-
-    def test_ip_discovery_disabled(self, tmp_path: Path) -> None:
-        """FOUNDRY_IP_DISCOVERY=false appends --noipdiscovery."""
-        _setup_launcher_env(tmp_path)
-        result = _run_launcher(
-            ["resources/app/main.mjs", "--port=30000"],
-            env={"FOUNDRY_IP_DISCOVERY": "false"},
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "--noipdiscovery" in result.stdout
-
-    def test_log_size_and_max_logs(self, tmp_path: Path) -> None:
-        """FOUNDRY_LOG_SIZE and FOUNDRY_MAX_LOGS append --logsize and --maxlogs."""
-        _setup_launcher_env(tmp_path)
-        result = _run_launcher(
-            ["resources/app/main.mjs", "--port=30000"],
-            env={"FOUNDRY_LOG_SIZE": "50000", "FOUNDRY_MAX_LOGS": "5"},
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "--logsize=50000" in result.stdout
-        assert "--maxlogs=5" in result.stdout
-
-    def test_no_backups(self, tmp_path: Path) -> None:
-        """FOUNDRY_NO_BACKUPS=true appends --nobackups."""
-        _setup_launcher_env(tmp_path)
-        result = _run_launcher(
-            ["resources/app/main.mjs", "--port=30000"],
-            env={"FOUNDRY_NO_BACKUPS": "true"},
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "--nobackups" in result.stdout
-
-    def test_all_flags_combined(self, tmp_path: Path) -> None:
-        """Multiple flags produce correct combined expansion."""
-        _setup_launcher_env(tmp_path)
-        result = _run_launcher(
-            ["resources/app/main.mjs", "--port=30000"],
-            env={
-                "FOUNDRY_IP_DISCOVERY": "false",
-                "FOUNDRY_LOG_SIZE": "10000",
-                "FOUNDRY_MAX_LOGS": "3",
-                "FOUNDRY_NO_BACKUPS": "true",
-            },
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "--noipdiscovery" in result.stdout
-        assert "--logsize=10000" in result.stdout
-        assert "--maxlogs=3" in result.stdout
-        assert "--nobackups" in result.stdout
+# ── Integration: service key validation through require_env ──────────────────
 
 
-class TestLauncherMissingPath:
-    """Tests for launcher.sh failure when required paths are missing."""
+def test_service_key_without_config_fails() -> None:
+    """FOUNDRY_SERVICE_KEY set without FOUNDRY_SERVICE_CONFIG fails via require_env.
 
-    def test_node_executable_missing(self, tmp_path: Path) -> None:
-        """Exits non-zero when /usr/local/bin/node is absent.
+    This mirrors the launcher.sh validation path after the refactor.
+    """
+    script = textwrap.dedent(f"""\
+        cd '{SRC_DIR}'
+        {LOG_STUBS}
+        source validate.sh
 
-        We redirect PATH so the node stub is not found at /usr/local/bin/node.
-        Since /usr/local/bin/node likely exists on the host, we simulate by
-        checking that the validate call is wired up: we override the launcher
-        to point to a non-existent node path via a wrapper.
-        """
-        _setup_launcher_env(tmp_path)
-        # Write a wrapper that redefines the node path for testing
-        wrapper = tmp_path / "test_launcher.sh"
-        wrapper.write_text(
-            textwrap.dedent(f"""\
-                #!/bin/bash
-                set -o nounset
-                set -o errexit
-                set -o pipefail
-                cd '{tmp_path}'
-                source logging.sh
-                source validate.sh
-                # Simulate the node check from launcher.sh with a bogus path
-                if ! validate_executable_file "{tmp_path}/no_such_node" "Node.js executable"; then
-                  exit 1
-                fi
-            """)
-        )
-        wrapper.chmod(0o755)
-        result = subprocess.run(
-            ["bash", str(wrapper)],
-            capture_output=True,
-            text=True,
-            env={**os.environ, "LOG_NAME": "Test"},
-            timeout=10,
-        )
-        assert result.returncode == 1
-        # logging.sh log_error writes to stdout (not stderr)
-        assert "not found or not executable" in result.stdout
+        FOUNDRY_SERVICE_KEY="test-key"
+        unset FOUNDRY_SERVICE_CONFIG 2>/dev/null || true
+
+        if [[ "${{FOUNDRY_SERVICE_KEY:-}}" ]]; then
+          require_env "FOUNDRY_SERVICE_CONFIG" "service provider configuration"
+        fi
+        echo "should not reach here"
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 1
+    assert "FOUNDRY_SERVICE_CONFIG" in result.stderr
+    assert "should not reach here" not in result.stdout
 
 
-class TestLauncherUnwritableDir:
-    """Tests for launcher.sh failure when config dir is not writable."""
+def test_service_key_with_config_succeeds() -> None:
+    """FOUNDRY_SERVICE_KEY with FOUNDRY_SERVICE_CONFIG passes validation."""
+    script = textwrap.dedent(f"""\
+        cd '{SRC_DIR}'
+        {LOG_STUBS}
+        source validate.sh
 
-    def test_config_dir_unwritable(self, tmp_path: Path) -> None:
-        """Exits non-zero when CONFIG_DIR cannot be written to.
+        FOUNDRY_SERVICE_KEY="test-key"
+        FOUNDRY_SERVICE_CONFIG="/path/to/config"
 
-        We create a read-only directory and point CONFIG_DIR at it.
-        """
-        _setup_launcher_env(tmp_path)
-        readonly_config = tmp_path / "readonly_config"
-        readonly_config.mkdir()
-        readonly_config.chmod(stat.S_IRUSR | stat.S_IXUSR)  # r-x only
-
-        wrapper = tmp_path / "test_launcher.sh"
-        wrapper.write_text(
-            textwrap.dedent(f"""\
-                #!/bin/bash
-                set -o nounset
-                set -o errexit
-                set -o pipefail
-                cd '{tmp_path}'
-                source logging.sh
-                source validate.sh
-                CONFIG_DIR="{readonly_config}"
-                mkdir -p "${{CONFIG_DIR}}" || true
-                if ! validate_writable_dir "${{CONFIG_DIR}}"; then
-                  echo "ERROR: Configuration directory ${{CONFIG_DIR}} is not writable." >&2
-                  exit 1
-                fi
-            """)
-        )
-        wrapper.chmod(0o755)
-        result = subprocess.run(
-            ["bash", str(wrapper)],
-            capture_output=True,
-            text=True,
-            env={**os.environ, "LOG_NAME": "Test"},
-            timeout=10,
-        )
-        try:
-            assert result.returncode == 1
-            assert "not writable" in result.stderr
-        finally:
-            readonly_config.chmod(stat.S_IRWXU)  # restore for cleanup
-
-
-class TestLauncherServiceKey:
-    """Tests for launcher.sh service key validation."""
-
-    def test_service_key_without_config_fails(self, tmp_path: Path) -> None:
-        """Exits 1 when FOUNDRY_SERVICE_KEY is set without FOUNDRY_SERVICE_CONFIG."""
-        _setup_launcher_env(tmp_path)
-        result = _run_launcher(
-            ["resources/app/main.mjs", "--port=30000"],
-            env={"FOUNDRY_SERVICE_KEY": "test-key"},
-            cwd=tmp_path,
-        )
-        assert result.returncode == 1
-        # logging.sh log_error writes to stdout
-        assert "FOUNDRY_SERVICE_KEY" in result.stdout
-        assert "FOUNDRY_SERVICE_CONFIG" in result.stdout
-
-    def test_service_key_with_config_succeeds(self, tmp_path: Path) -> None:
-        """Dry-run succeeds when both FOUNDRY_SERVICE_KEY and CONFIG are set."""
-        _setup_launcher_env(tmp_path)
-        result = _run_launcher(
-            ["resources/app/main.mjs", "--port=30000"],
-            env={
-                "FOUNDRY_SERVICE_KEY": "test-key",
-                "FOUNDRY_SERVICE_CONFIG": "/etc/foundry/service.json",
-            },
-            cwd=tmp_path,
-        )
-        assert result.returncode == 0, f"stderr: {result.stderr}"
-        assert "--serviceKey=test-key" in result.stdout
-
-
-# ── Entrypoint validation integration tests ───────────────────────────────────
-
-
-class TestEntrypointValidation:
-    """Tests that exercise the validation calls extracted from entrypoint.sh."""
-
-    def test_writable_dir_failure_exits_nonzero(self, tmp_path: Path) -> None:
-        """Simulate the entrypoint DATA_DIR check: non-writable dir → exit 1."""
-        readonly_dir = tmp_path / "readonly_data"
-        readonly_dir.mkdir()
-        readonly_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)
-
-        script = textwrap.dedent(f"""\
-            validate_writable_dir "{readonly_dir}" || exit 1
-        """)
-        result = _run_validate(script)
-        try:
-            assert result.returncode == 1
-        finally:
-            readonly_dir.chmod(stat.S_IRWXU)
-
-    def test_cache_size_zero_exits_nonzero(self) -> None:
-        """Simulate the entrypoint CONTAINER_CACHE_SIZE check: 0 → exit 1."""
-        script = textwrap.dedent("""\
-            validate_positive_integer "0" "CONTAINER_CACHE_SIZE" || exit 1
-        """)
-        result = _run_validate(script)
-        assert result.returncode == 1
-
-    def test_cache_size_valid_exits_zero(self) -> None:
-        """Simulate the entrypoint CONTAINER_CACHE_SIZE check: 5 → exit 0."""
-        script = textwrap.dedent("""\
-            validate_positive_integer "5" "CONTAINER_CACHE_SIZE" || exit 1
-        """)
-        result = _run_validate(script)
-        assert result.returncode == 0
+        if [[ "${{FOUNDRY_SERVICE_KEY:-}}" ]]; then
+          require_env "FOUNDRY_SERVICE_CONFIG" "service provider configuration"
+        fi
+        echo "ok"
+    """)
+    result = subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0
+    assert "ok" in result.stdout

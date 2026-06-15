@@ -1,120 +1,118 @@
 #!/bin/bash
 
-# validate.sh — sourceable shell library providing reusable path and value
-# validation functions for the foundryvtt-docker container.
+# validate.sh — sourceable bash library for path and environment validation.
+# Source this file after logging.sh.  Depends on log_debug and log_error.
 #
-# All functions return 0 on success and 1 on failure.  They log diagnostics
-# via log_debug / log_error (from logging.sh) but never call exit — the
-# caller retains full control over error-exit policy.
-#
-# Prerequisites: logging.sh must be sourced by the caller before this file.
+# Exposes:
+#   require_file <path> [label]         — exit 1 if file does not exist
+#   require_dir <path> [label]          — exit 1 if directory does not exist
+#   require_executable <path> [label]   — exit 1 if file is not executable
+#   require_writable_dir <path> [label] — exit 1 if dir fails write/read/delete test
+#   require_env <var_name> [label]      — exit 1 if env var is unset or empty
 
-# validate_writable_dir <dir_path>
-#   Verify that <dir_path> exists as a directory and supports write, read,
-#   and delete operations by creating a temporary probe file.
-#   Returns: 0 if all three operations succeed, 1 otherwise.
-validate_writable_dir() {
-  local dir="${1:-}"
-
-  if [[ -z "${dir}" ]]; then
-    log_error "validate_writable_dir: no directory path provided."
-    return 1
+# _validate_fail <path> <reason> [label]
+#   Internal helper: log a consistent error block and exit 1.
+_validate_fail() {
+  local path="${1}"
+  local reason="${2}"
+  local label="${3:-}"
+  if [[ -n "${label}" ]]; then
+    log_error "Validation failed for ${label}: ${reason}"
+  else
+    log_error "Validation failed: ${reason}"
   fi
+  log_error "  Path: ${path}"
+  log_error "  Running as uid:gid: $(id -u):$(id -g)"
+  exit 1
+}
 
-  if [[ ! -d "${dir}" ]]; then
-    log_error "Directory does not exist: ${dir}"
-    return 1
+# require_file <path> [label]
+#   Exit 1 if the file at <path> does not exist.
+require_file() {
+  local path="${1}"
+  local label="${2:-${path}}"
+  log_debug "require_file: checking ${path}"
+  if [[ ! -f "${path}" ]]; then
+    _validate_fail "${path}" "File not found" "${label}"
   fi
+}
 
-  local probe_file="${dir}/.validate-probe-$$"
+# require_dir <path> [label]
+#   Exit 1 if the directory at <path> does not exist.
+require_dir() {
+  local path="${1}"
+  local label="${2:-${path}}"
+  log_debug "require_dir: checking ${path}"
+  if [[ ! -d "${path}" ]]; then
+    _validate_fail "${path}" "Directory not found" "${label}"
+  fi
+}
+
+# require_executable <path> [label]
+#   Exit 1 if the file at <path> does not exist or is not executable.
+require_executable() {
+  local path="${1}"
+  local label="${2:-${path}}"
+  log_debug "require_executable: checking ${path}"
+  if [[ ! -f "${path}" ]]; then
+    _validate_fail "${path}" "File not found" "${label}"
+  fi
+  if [[ ! -x "${path}" ]]; then
+    _validate_fail "${path}" "File is not executable" "${label}"
+  fi
+}
+
+# require_writable_dir <path> [label]
+#   Perform a write/read/delete test on <path>.  Exit 1 if any step fails.
+#   Preserves the original entrypoint.sh behaviour: all three tests run
+#   regardless of earlier failures so every problem is reported.
+require_writable_dir() {
+  local path="${1}"
+  local label="${2:-${path}}"
+  local test_file="${path}/.container-permissions-test.txt"
   local failed=0
 
-  if ! touch "${probe_file}" 2>/dev/null; then
-    log_error "Write test failed on directory: ${dir}"
+  log_debug "require_writable_dir: testing permissions on ${path}"
+
+  if [[ ! -d "${path}" ]]; then
+    _validate_fail "${path}" "Directory not found" "${label}"
+  fi
+
+  if ! touch "${test_file}" 2> /dev/null; then
+    log_error "Volume write test failed."
     failed=1
   else
-    log_debug "validate_writable_dir: write test passed for ${dir}"
-    if ! cat "${probe_file}" >/dev/null 2>&1; then
-      log_error "Read test failed on directory: ${dir}"
-      failed=1
-    else
-      log_debug "validate_writable_dir: read test passed for ${dir}"
-    fi
-    if ! rm -f "${probe_file}" 2>/dev/null; then
-      log_error "Delete test failed on directory: ${dir}"
-      failed=1
-    else
-      log_debug "validate_writable_dir: delete test passed for ${dir}"
-    fi
+    log_debug "Volume write test succeeded."
   fi
-
+  if ! cat "${test_file}" > /dev/null 2>&1; then
+    log_error "Volume read test failed."
+    failed=1
+  else
+    log_debug "Volume read test succeeded."
+  fi
+  if ! rm -f "${test_file}" 2> /dev/null; then
+    log_error "Volume delete test failed."
+    failed=1
+  else
+    log_debug "Volume delete test succeeded."
+  fi
   if [[ "${failed}" -ne 0 ]]; then
-    return 1
+    log_error "Aborting due to insufficient permissions on ${path}"
+    log_error "Container running as uid:gid: $(id -u):$(id -g)"
+    log_error "For more information see the discussion at: https://github.com/felddy/foundryvtt-docker/discussions/1197"
+    exit 1
   fi
-
-  log_debug "validate_writable_dir: all tests passed for ${dir}"
-  return 0
+  log_debug "All permissions tests on ${path} succeeded."
 }
 
-# validate_required_file <file_path> [description]
-#   Check that <file_path> exists and is a regular file.
-#   Returns: 0 if the file exists, 1 if missing.
-validate_required_file() {
-  local file_path="${1:-}"
-  local description="${2:-file}"
-
-  if [[ -z "${file_path}" ]]; then
-    log_error "validate_required_file: no file path provided."
-    return 1
+# require_env <var_name> [label]
+#   Exit 1 if the environment variable named <var_name> is unset or empty.
+require_env() {
+  local var_name="${1}"
+  local label="${2:-${var_name}}"
+  log_debug "require_env: checking \$${var_name}"
+  if [[ -z "${!var_name:-}" ]]; then
+    log_error "Validation failed for ${label}: Required environment variable ${var_name} is not set."
+    exit 1
   fi
-
-  if [[ ! -f "${file_path}" ]]; then
-    log_error "Required ${description} not found: ${file_path}"
-    return 1
-  fi
-
-  log_debug "validate_required_file: ${description} found at ${file_path}"
-  return 0
-}
-
-# validate_executable_file <file_path> [description]
-#   Check that <file_path> exists and has the executable bit set.
-#   Returns: 0 if executable, 1 otherwise.
-validate_executable_file() {
-  local file_path="${1:-}"
-  local description="${2:-executable}"
-
-  if [[ -z "${file_path}" ]]; then
-    log_error "validate_executable_file: no file path provided."
-    return 1
-  fi
-
-  if [[ ! -x "${file_path}" ]]; then
-    log_error "Required ${description} not found or not executable: ${file_path}"
-    return 1
-  fi
-
-  log_debug "validate_executable_file: ${description} OK at ${file_path}"
-  return 0
-}
-
-# validate_positive_integer <value> <name>
-#   Check that <value> is a positive integer (> 0).
-#   Returns: 0 if valid, 1 otherwise.
-validate_positive_integer() {
-  local value="${1:-}"
-  local name="${2:-value}"
-
-  if [[ -z "${value}" ]]; then
-    log_error "${name} is not set or empty."
-    return 1
-  fi
-
-  if ! [[ "${value}" =~ ^[0-9]+$ ]] || [[ "${value}" -le 0 ]]; then
-    log_error "${name} must be a positive integer.  Found: ${value}"
-    return 1
-  fi
-
-  log_debug "validate_positive_integer: ${name}=${value} is valid."
-  return 0
 }

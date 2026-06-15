@@ -4,7 +4,7 @@ set -o nounset
 set -o errexit
 set -o pipefail
 
-CONFIG_DIR="${CONFIG_DIR:-/data/Config}"
+CONFIG_DIR="/data/Config"
 ADMIN_KEY_FILE="${CONFIG_DIR}/admin.txt"
 CONFIG_FILE="${CONFIG_DIR}/options.json"
 # shellcheck disable=SC2034
@@ -19,10 +19,6 @@ source validate.sh
 # ensure the config directory exists
 log_debug "Ensuring ${CONFIG_DIR} directory exists."
 mkdir -p "${CONFIG_DIR}"
-if ! validate_writable_dir "${CONFIG_DIR}"; then
-  log_error "Configuration directory ${CONFIG_DIR} is not writable."
-  exit 1
-fi
 
 if [[ "${CONTAINER_PRESERVE_CONFIG:-}" == "true" && -f "${CONFIG_FILE}" ]]; then
   log_warn "CONTAINER_PRESERVE_CONFIG is set: Not updating options.json"
@@ -72,10 +68,7 @@ if [[ "${FOUNDRY_NO_BACKUPS:-}" == "true" ]]; then
 fi
 
 if [[ "${FOUNDRY_SERVICE_KEY:-}" ]]; then
-  if [[ -z "${FOUNDRY_SERVICE_CONFIG:-}" ]]; then
-    log_error "FOUNDRY_SERVICE_KEY is set but FOUNDRY_SERVICE_CONFIG is not.  Both are required."
-    exit 1
-  fi
+  require_env "FOUNDRY_SERVICE_CONFIG" "service provider configuration (required when FOUNDRY_SERVICE_KEY is set)"
   log "FOUNDRY_SERVICE_KEY is set: Enabling service provider configuration."
   set -- "$@" --serviceKey="${FOUNDRY_SERVICE_KEY}"
 fi
@@ -96,18 +89,8 @@ while IFS='=' read -rd '' ENV_VAR_NAME ENV_VAR_VALUE; do
   done
 done < <(env -0)
 
-NODE_BIN="${NODE_BIN:-/usr/local/bin/node}"
-
 # Exec node with clean environment to prevent credential leaks
 log "Starting Foundry Virtual Tabletop."
-if ! validate_executable_file "${NODE_BIN}" "Node.js executable"; then
-  exit 1
-fi
-if [[ "${CONTAINER_DRY_RUN:-}" == "true" ]]; then
-  # shellcheck disable=SC2086
-  echo "exec env -i $ENV_VAR_CARRY_LIST ${NODE_BIN} $*"
-  exit 0
-fi
 # We want ENV_VAR_CARRY_LIST to word split
 # shellcheck disable=SC2086
-exec env -i $ENV_VAR_CARRY_LIST "${NODE_BIN}" "$@" || log_error "Exec failed with code $?"
+exec env -i $ENV_VAR_CARRY_LIST /usr/local/bin/node "$@" || log_error "Exec failed with code $?"

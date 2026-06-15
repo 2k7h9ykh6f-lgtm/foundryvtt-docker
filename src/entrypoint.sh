@@ -99,14 +99,7 @@ mount_info=$(findmnt -n -o SOURCE,FSTYPE,OPTIONS --target "${DATA_DIR}")
 log_debug "Mount info for ${DATA_DIR}: ${mount_info}"
 
 # Test volume permissions
-log_debug "Testing read/write/delete permissions on ${DATA_DIR}"
-if ! validate_writable_dir "${DATA_DIR}"; then
-  log_error "Aborting due to insufficient permissions on ${DATA_DIR}"
-  log_error "Container running as uid:gid: $(id -u):$(id -g)"
-  log_error "For more information see the discussion at: https://github.com/felddy/foundryvtt-docker/discussions/1197"
-  exit 1
-fi
-log_debug "All permissions tests passed on ${DATA_DIR}"
+require_writable_dir "${DATA_DIR}" "data volume"
 
 cookiejar_file="/tmp/cookiejar.json"
 license_min_length=24
@@ -297,7 +290,8 @@ END_OF_LINE
     log "Preserving release archive file in cache."
     # Check if CONTAINER_CACHE_SIZE is set and if so, ensure it's greater than 0
     if [[ -n "${CONTAINER_CACHE_SIZE:-}" ]]; then
-      if ! validate_positive_integer "${CONTAINER_CACHE_SIZE}" "CONTAINER_CACHE_SIZE"; then
+      if ! [[ "${CONTAINER_CACHE_SIZE}" -gt 0 ]] 2> /dev/null; then
+        log_error "If set, CONTAINER_CACHE_SIZE must be 1 or greater.  Found: ${CONTAINER_CACHE_SIZE}"
         exit 1
       fi
 
