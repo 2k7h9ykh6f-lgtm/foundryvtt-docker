@@ -1,0 +1,23 @@
+# This file specifies intentionally untracked files that Git should ignore.
+# Files already tracked by Git are not affected.
+# See: https://git-scm.com/docs/gitignore
+
+## DirEnv ##
+.envrc
+
+## FoundryVTT ##
+cookiejar.json
+license.json
+
+## Javascript / Typescript ##
+dist
+node_modules
+
+## Python ##
+__pycache__
+.hypothesis
+.mypy_cache
+.pytest_cache
+.python-version
+*.egg-info
+venv
