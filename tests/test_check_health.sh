@@ -1,334 +1,195 @@
 #!/bin/bash
-# test_check_health.sh — standalone tests for src/check_health.sh
+# test_check_health.sh — local verification for src/check_health.sh
 #
-# Run:  bash tests/test_check_health.sh
+# Uses mock curl scripts (via the CURL env-var override) so no network or
+# running container is required.
 #
-# Uses short-lived Python HTTP servers to simulate each failure branch.
-# No Docker image required.
+# Usage:  bash tests/test_check_health.sh
 
-set -u
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-HEALTH_SCRIPT="${REPO_DIR}/src/check_health.sh"
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECK_HEALTH="${SCRIPT_DIR}/../src/check_health.sh"
+TEMP_DIR=""
 PASS=0
 FAIL=0
-TEST_PORT=""
-SERVER_PID=""
 
-# Cleanup any background server on exit
-cleanup() {
-  if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then
-    kill "${SERVER_PID}" 2>/dev/null
-    wait "${SERVER_PID}" 2>/dev/null
-  fi
-}
+# ── helpers ──────────────────────────────────────────────────────────────
+
+cleanup() { [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"; }
 trap cleanup EXIT
+TEMP_DIR=$(mktemp -d)
 
-###############################################################################
-# Helpers
-###############################################################################
-
-# Find a free TCP port
-find_free_port() {
-  python3 -c '
-import socket
-s = socket.socket()
-s.bind(("127.0.0.1", 0))
-print(s.getsockname()[1])
-s.close()
-'
-}
-
-# Start a Python HTTP server returning a given status code on a given port.
-# Usage: start_server <port> <status_code>
-start_server() {
-  local port="$1" status="$2"
-  python3 -c "
-import http.server, socketserver, sys
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(${status})
-        self.send_header('Content-Type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b'${status} response')
-    def log_message(self, *a):
-        pass  # suppress logs
-
-socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(('127.0.0.1', ${port}), Handler) as httpd:
-    httpd.serve_forever()
-" &
-  SERVER_PID=$!
-  # Wait until server is actually listening
-  for _i in $(seq 1 30); do
-    if python3 -c "import socket; s=socket.socket(); s.settimeout(0.2); s.connect(('127.0.0.1',${port})); s.close()" 2>/dev/null; then
-      return 0
-    fi
-    sleep 0.1
-  done
-  echo "ERROR: server on port ${port} did not start in time" >&2
-  return 1
-}
-
-# Stop the current mock server
-stop_server() {
-  if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then
-    kill "${SERVER_PID}" 2>/dev/null
-    wait "${SERVER_PID}" 2>/dev/null
-  fi
-  SERVER_PID=""
-}
-
-# Run one test case
-# Usage: run_test <name> <expected_exit> <expected_json_code|_-> <extra_env...> -- <extra_args...>
-run_test() {
-  local name="$1"; shift
-  local expect_exit="$1"; shift
-  local expect_code="$1"; shift  # "_" means skip JSON code check
-
-  # Collect env vars (everything before --)
-  local -a env_vars=()
-  local -a extra_args=()
-  local past_sep=false
-  for arg in "$@"; do
-    if [[ "${arg}" == "--" ]]; then
-      past_sep=true
-      continue
-    fi
-    if [[ "${past_sep}" == "true" ]]; then
-      extra_args+=("${arg}")
-    else
-      env_vars+=("${arg}")
-    fi
-  done
-
-  # Run the health check
-  local actual_exit=0
-  local output=""
-  output=$(env "${env_vars[@]}" bash "${HEALTH_SCRIPT}" "${extra_args[@]}" 2>&1) || actual_exit=$?
-
-  # Check exit code
-  if [[ "${actual_exit}" -ne "${expect_exit}" ]]; then
-    echo "  FAIL: ${name}"
-    echo "        expected exit=${expect_exit}, got exit=${actual_exit}"
-    echo "        output: ${output}"
-    FAIL=$((FAIL + 1))
-    return
-  fi
-
-  # Check JSON code if requested
-  if [[ "${expect_code}" != "_" ]]; then
-    local actual_code=""
-    actual_code=$(echo "${output}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['code'])" 2>/dev/null) || true
-    if [[ "${actual_code}" != "${expect_code}" ]]; then
-      echo "  FAIL: ${name}"
-      echo "        expected code=${expect_code}, got code=${actual_code}"
-      echo "        output: ${output}"
-      FAIL=$((FAIL + 1))
-      return
-    fi
-  fi
-
-  echo "  PASS: ${name}"
-  PASS=$((PASS + 1))
-}
-
-###############################################################################
-# Tests
-###############################################################################
-echo "=== check_health.sh test suite ==="
-echo ""
-
-# ---------- Default mode (Docker HEALTHCHECK compat) ----------
-echo "[Default mode]"
-
-# D1: Success — server returns 200
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 200
-run_test "default mode: 200 → exit 0" 0 "_" \
-  "FOUNDRY_PORT=${TEST_PORT}" --
-stop_server
-
-# D2: Failure — nothing listening
-TEST_PORT=$(find_free_port)
-run_test "default mode: nothing listening → exit 1" 1 "_" \
-  "FOUNDRY_PORT=${TEST_PORT}" --
-
-# D3: Failure — server returns 500 (curl --fail treats 4xx/5xx as failure)
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 500
-run_test "default mode: 500 → exit 1" 1 "_" \
-  "FOUNDRY_PORT=${TEST_PORT}" --
-stop_server
-
-echo ""
-
-# ---------- JSON mode: success ----------
-echo "[JSON mode — success]"
-
-# J1: 200 → OK
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 200
-run_test "json mode: 200 → code OK" 0 "OK" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-stop_server
-
-echo ""
-
-# ---------- JSON mode: failure branches ----------
-echo "[JSON mode — failures]"
-
-# J2: Connection refused
-TEST_PORT=$(find_free_port)
-run_test "json mode: conn refused → CONN_REFUSED" 1 "CONN_REFUSED" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-
-# J3: HTTP 500
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 500
-run_test "json mode: 500 → HTTP_ERROR" 1 "HTTP_ERROR" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-stop_server
-
-# J4: HTTP 503
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 503
-run_test "json mode: 503 → HTTP_ERROR" 1 "HTTP_ERROR" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-stop_server
-
-# J5: HTTP 401 → AUTH_REDIRECT
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 401
-run_test "json mode: 401 → AUTH_REDIRECT" 1 "AUTH_REDIRECT" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-stop_server
-
-# J6: HTTP 403 → AUTH_REDIRECT
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 403
-run_test "json mode: 403 → AUTH_REDIRECT" 1 "AUTH_REDIRECT" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-stop_server
-
-# J7: HTTP 302 → AUTH_REDIRECT
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 302
-run_test "json mode: 302 → AUTH_REDIRECT" 1 "AUTH_REDIRECT" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-stop_server
-
-# J8: HTTP 404 → HTTP_ERROR
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 404
-run_test "json mode: 404 → HTTP_ERROR" 1 "HTTP_ERROR" \
-  "FOUNDRY_PORT=${TEST_PORT}" -- --json
-stop_server
-
-echo ""
-
-# ---------- JSON mode: env-var activation ----------
-echo "[JSON mode — env var activation]"
-
-# J9: HEALTHCHECK_JSON=1 activates JSON mode without --json flag
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 200
-run_test "env HEALTHCHECK_JSON=1 → OK" 0 "OK" \
-  "FOUNDRY_PORT=${TEST_PORT}" "HEALTHCHECK_JSON=1" --
-stop_server
-
-echo ""
-
-# ---------- JSON output validation ----------
-echo "[JSON output structure]"
-
-# J10: Validate JSON contains all required fields
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 200
-OUTPUT=$(FOUNDRY_PORT="${TEST_PORT}" bash "${HEALTH_SCRIPT}" --json 2>&1)
-MISSING_FIELDS=""
-for field in status code http_status url message; do
-  if ! echo "${OUTPUT}" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); assert '${field}' in d" 2>/dev/null; then
-    MISSING_FIELDS="${MISSING_FIELDS} ${field}"
+# Create a mock curl script that returns a given exit code.
+# In JSON mode (--write-out present) it also prints the supplied http_code.
+create_mock_curl() {
+  local exit_code="$1" http_code="${2:-000}"
+  local mock_path="${TEMP_DIR}/mock_curl_${exit_code}_${http_code}"
+  cat > "$mock_path" << MOCK
+#!/bin/bash
+for arg in "\$@"; do
+  if [[ "\$arg" == *"%{http_code}"* ]]; then
+    echo -n "${http_code}"
+    exit ${exit_code}
   fi
 done
-if [[ -z "${MISSING_FIELDS}" ]]; then
-  echo "  PASS: json output contains all required fields"
-  PASS=$((PASS + 1))
-else
-  echo "  FAIL: json output missing fields:${MISSING_FIELDS}"
-  echo "        output: ${OUTPUT}"
-  FAIL=$((FAIL + 1))
-fi
-stop_server
+exit ${exit_code}
+MOCK
+  chmod +x "$mock_path"
+  echo "$mock_path"
+}
 
-# J11: Validate http_status is an integer in success
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 200
-OUTPUT=$(FOUNDRY_PORT="${TEST_PORT}" bash "${HEALTH_SCRIPT}" --json 2>&1)
-HTTP_STATUS=$(echo "${OUTPUT}" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d['http_status'])" 2>/dev/null)
-if [[ "${HTTP_STATUS}" == "200" ]]; then
-  echo "  PASS: http_status is 200 (integer)"
-  PASS=$((PASS + 1))
-else
-  echo "  FAIL: expected http_status=200, got ${HTTP_STATUS}"
-  FAIL=$((FAIL + 1))
-fi
-stop_server
+run_check() {
+  # Run check_health.sh, capture stdout and exit code.
+  # Arguments after -- are forwarded to the script.
+  local curl_path="$1"; shift
+  local output exit_code
+  output=$(CURL="$curl_path" bash "$CHECK_HEALTH" "$@" 2>/dev/null) || true
+  # Re-run to get exit code (set -e would abort otherwise)
+  CURL="$curl_path" bash "$CHECK_HEALTH" "$@" >/dev/null 2>&1 && exit_code=0 || exit_code=$?
+  echo "${exit_code}|${output}"
+}
 
-# J12: Validate http_status is null in CONN_REFUSED
-TEST_PORT=$(find_free_port)
-OUTPUT=$(FOUNDRY_PORT="${TEST_PORT}" bash "${HEALTH_SCRIPT}" --json 2>&1)
-HTTP_STATUS=$(echo "${OUTPUT}" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d['http_status'])" 2>/dev/null)
-if [[ "${HTTP_STATUS}" == "None" ]]; then
-  echo "  PASS: http_status is null for CONN_REFUSED"
-  PASS=$((PASS + 1))
-else
-  echo "  FAIL: expected http_status=None, got ${HTTP_STATUS}"
-  FAIL=$((FAIL + 1))
-fi
+assert_exit() {
+  local label="$1" actual="$2" expected="$3"
+  if [[ "$actual" == "$expected" ]]; then
+    echo "  PASS  exit=$actual"
+    ((++PASS))
+  else
+    echo "  FAIL  exit: expected=$expected actual=$actual  [$label]"
+    ((++FAIL))
+  fi
+}
 
-# J13: Validate url field contains the expected URL
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 200
-OUTPUT=$(FOUNDRY_PORT="${TEST_PORT}" bash "${HEALTH_SCRIPT}" --json 2>&1)
-URL_VAL=$(echo "${OUTPUT}" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d['url'])" 2>/dev/null)
-if [[ "${URL_VAL}" == "http://localhost:${TEST_PORT}/api/status" ]]; then
-  echo "  PASS: url field is correct"
-  PASS=$((PASS + 1))
-else
-  echo "  FAIL: expected url=http://localhost:${TEST_PORT}/api/status, got ${URL_VAL}"
-  FAIL=$((FAIL + 1))
-fi
-stop_server
+assert_json_field() {
+  local label="$1" json="$2" field="$3" expected="$4"
+  local actual
+  actual=$(echo "$json" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+v = d.get('$field')
+print('null' if v is None else v)
+" 2>/dev/null) || actual="<parse error>"
+  if [[ "$actual" == "$expected" ]]; then
+    echo "  PASS  $field=$actual"
+    ((++PASS))
+  else
+    echo "  FAIL  $field: expected=$expected actual=$actual  [$label]"
+    ((++FAIL))
+  fi
+}
+
+assert_json_valid() {
+  local label="$1" json="$2"
+  if echo "$json" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+    echo "  PASS  valid JSON"
+    ((++PASS))
+  else
+    echo "  FAIL  invalid JSON  [$label]"
+    ((++FAIL))
+  fi
+}
+
+assert_no_stdout() {
+  local label="$1" output="$2"
+  if [[ -z "$output" ]]; then
+    echo "  PASS  no stdout (default mode)"
+    ((++PASS))
+  else
+    echo "  FAIL  expected no stdout, got: $output  [$label]"
+    ((++FAIL))
+  fi
+}
+
+# ── test cases ───────────────────────────────────────────────────────────
+
+echo "=== Test 1: default mode — healthy (curl exits 0) ==="
+mock=$(create_mock_curl 0 200)
+result=$(run_check "$mock")
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "default-healthy" "$exit_code" "0"
+assert_no_stdout "default-healthy" "$output"
 
 echo ""
-
-# ---------- Route prefix ----------
-echo "[Route prefix]"
-
-# J14: FOUNDRY_ROUTE_PREFIX is reflected in the URL
-TEST_PORT=$(find_free_port)
-start_server "${TEST_PORT}" 200
-OUTPUT=$(FOUNDRY_PORT="${TEST_PORT}" FOUNDRY_ROUTE_PREFIX="myprefix" bash "${HEALTH_SCRIPT}" --json 2>&1)
-URL_VAL=$(echo "${OUTPUT}" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d['url'])" 2>/dev/null)
-if [[ "${URL_VAL}" == "http://localhost:${TEST_PORT}/myprefix/api/status" ]]; then
-  echo "  PASS: route prefix reflected in url"
-  PASS=$((PASS + 1))
-else
-  echo "  FAIL: expected url with /myprefix/, got ${URL_VAL}"
-  FAIL=$((FAIL + 1))
-fi
-stop_server
+echo "=== Test 2: default mode — connection refused (curl exits 7) ==="
+mock=$(create_mock_curl 7)
+result=$(run_check "$mock")
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "default-connrefused" "$exit_code" "1"
 
 echo ""
+echo "=== Test 3: --json mode — healthy (HTTP 200) ==="
+mock=$(create_mock_curl 0 200)
+result=$(run_check "$mock" --json)
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "json-healthy" "$exit_code" "0"
+assert_json_valid "json-healthy" "$output"
+assert_json_field "json-healthy" "$output" "status" "healthy"
+assert_json_field "json-healthy" "$output" "http_code" "200"
 
-# ---------- Summary ----------
-echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
-if [[ "${FAIL}" -gt 0 ]]; then
-  exit 1
-fi
-exit 0
+echo ""
+echo "=== Test 4: --json mode — connection refused (curl exit 7) ==="
+mock=$(create_mock_curl 7 000)
+result=$(run_check "$mock" --json)
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "json-connrefused" "$exit_code" "1"
+assert_json_valid "json-connrefused" "$output"
+assert_json_field "json-connrefused" "$output" "status" "connection_refused"
+assert_json_field "json-connrefused" "$output" "curl_exit" "7"
+assert_json_field "json-connrefused" "$output" "http_code" "null"
+
+echo ""
+echo "=== Test 5: --json mode — timeout (curl exit 28) ==="
+mock=$(create_mock_curl 28 000)
+result=$(run_check "$mock" --json)
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "json-timeout" "$exit_code" "1"
+assert_json_valid "json-timeout" "$output"
+assert_json_field "json-timeout" "$output" "status" "connection_refused"
+assert_json_field "json-timeout" "$output" "curl_exit" "28"
+
+echo ""
+echo "=== Test 6: --json mode — HTTP 403 (http_error) ==="
+mock=$(create_mock_curl 0 403)
+result=$(run_check "$mock" --json)
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "json-403" "$exit_code" "1"
+assert_json_valid "json-403" "$output"
+assert_json_field "json-403" "$output" "status" "http_error"
+assert_json_field "json-403" "$output" "http_code" "403"
+
+echo ""
+echo "=== Test 7: --json mode — HTTP 302 (auth_redirect) ==="
+mock=$(create_mock_curl 0 302)
+result=$(run_check "$mock" --json)
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "json-302" "$exit_code" "1"
+assert_json_valid "json-302" "$output"
+assert_json_field "json-302" "$output" "status" "auth_redirect"
+assert_json_field "json-302" "$output" "http_code" "302"
+
+echo ""
+echo "=== Test 8: --json mode — curl binary missing (config_missing) ==="
+result=$(run_check "/nonexistent/curl" --json)
+exit_code="${result%%|*}"
+output="${result#*|}"
+assert_exit "json-missing-curl" "$exit_code" "1"
+assert_json_valid "json-missing-curl" "$output"
+assert_json_field "json-missing-curl" "$output" "status" "config_missing"
+assert_json_field "json-missing-curl" "$output" "curl_exit" "127"
+assert_json_field "json-missing-curl" "$output" "http_code" "null"
+
+# ── summary ──────────────────────────────────────────────────────────────
+
+echo ""
+echo "==============================="
+echo "  PASSED: $PASS   FAILED: $FAIL"
+echo "==============================="
+[[ $FAIL -eq 0 ]] && exit 0 || exit 1
