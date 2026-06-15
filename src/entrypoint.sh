@@ -17,8 +17,6 @@ LOG_NAME="Entrypoint"
 source logging.sh
 # shellcheck source=src/backoff.sh
 source backoff.sh
-# shellcheck source=src/validate.sh
-source validate.sh
 
 # ── Trap handlers ─────────────────────────────────────────────────────────────
 
@@ -99,7 +97,34 @@ mount_info=$(findmnt -n -o SOURCE,FSTYPE,OPTIONS --target "${DATA_DIR}")
 log_debug "Mount info for ${DATA_DIR}: ${mount_info}"
 
 # Test volume permissions
-require_writable_dir "${DATA_DIR}" "data volume"
+permissions_test_file="${DATA_DIR}/.container-permissions-test.txt"
+permission_test_failed=0
+log_debug "Testing permissions on ${permissions_test_file}"
+if ! touch "${permissions_test_file}" 2> /dev/null; then
+  log_error "Volume write test failed."
+  permission_test_failed=1
+else
+  log_debug "Volume write test succeeded."
+fi
+if ! cat "${permissions_test_file}" > /dev/null 2>&1; then
+  log_error "Volume read test failed."
+  permission_test_failed=1
+else
+  log_debug "Volume read test succeeded."
+fi
+if ! rm -f "${permissions_test_file}" 2> /dev/null; then
+  log_error "Volume delete test failed."
+  permission_test_failed=1
+else
+  log_debug "Volume delete test succeeded."
+fi
+if [ "${permission_test_failed}" -ne 0 ]; then
+  log_error "[FATAL_CONFIG] Aborting due to insufficient permissions on ${DATA_DIR}"
+  log_error "[FATAL_CONFIG] Container running as uid:gid: $(id -u):$(id -g)"
+  log_error "[FATAL_CONFIG] For more information see the discussion at: https://github.com/felddy/foundryvtt-docker/discussions/1197"
+  exit 3
+fi
+log_debug "All permissions tests succeeded."
 
 cookiejar_file="/tmp/cookiejar.json"
 license_min_length=24
@@ -176,7 +201,12 @@ if [ $install_required = true ]; then
     set -e
 
     if [ ${auth_exit_code} -ne 0 ]; then
-      log_warn "Authentication failed with exit code ${auth_exit_code}."
+      if [ ${auth_exit_code} -eq 2 ]; then
+        log_error "[FATAL_AUTH] Authentication failed with exit code ${auth_exit_code}.  Verify FOUNDRY_USERNAME and FOUNDRY_PASSWORD."
+        rm -f "${cookiejar_file}"
+        exit 2
+      fi
+      log_warn "[RETRY] Authentication failed with exit code ${auth_exit_code}."
       rm -f "${cookiejar_file}"
     elif [[ ! "${presigned_url:-}" ]]; then
       # If the presigned_url wasn't set by FOUNDRY_RELEASE_URL generate one now.
@@ -227,14 +257,14 @@ END_OF_LINE
     set -e
 
     if [ ${curl_exit_code} -ne 0 ]; then
-      log_warn "Download from presigned URL failed with exit code ${curl_exit_code}."
+      log_warn "[RETRY] Download from presigned URL failed with exit code ${curl_exit_code}."
       # Remove any partially downloaded file
       [ -f "${downloading_filename}" ] && rm -f "${downloading_filename}"
 
       if [ -f "${release_filename}" ]; then
         log "Falling back to existing cached release file: ${release_filename}"
       else
-        log_error "No valid cached release file found. Unable to proceed with installation."
+        log_error "[RETRY] No valid cached release file found. Unable to proceed with installation."
         exit 1
       fi
     else
@@ -266,24 +296,24 @@ END_OF_LINE
       log_debug "Installation completed."
     else # The user provided the wrong file.
       if [ "${mime_type}" = "application/vnd.microsoft.portable-executable" ]; then
-        log_error "The release file appears to be a Windows executable (.exe)."
+        log_error "[FATAL_CONFIG] The release file appears to be a Windows executable (.exe)."
       elif [ "${mime_type}" = "application/zlib" ]; then
-        log_error "The release file appears to be a Mac disk image (.dmg)."
+        log_error "[FATAL_CONFIG] The release file appears to be a Mac disk image (.dmg)."
       else
-        log_error "The release file does not contain the expected zip data."
-        log_error "Found: ${mime_type} instead of application/zip"
+        log_error "[FATAL_CONFIG] The release file does not contain the expected zip data."
+        log_error "[FATAL_CONFIG] Found: ${mime_type} instead of application/zip"
       fi
-      log_error "Please provide the 'Linux/NodeJS' version of the release or URL."
+      log_error "[FATAL_CONFIG] Please provide the 'Linux/NodeJS' version of the release or URL."
       log_warn "Deleting invalid release file from cache."
       rm "${release_filename}"
-      exit 1
+      exit 3
     fi # mime_type is zip
   else # release_filename does not exist
-    log_error "Unable to install Foundry Virtual Tabletop!"
-    log_error "Either set FOUNDRY_RELEASE_URL."
-    log_error "Or set FOUNDRY_USERNAME and FOUNDRY_PASSWORD."
-    log_error "Or set CONTAINER_CACHE to a directory containing foundryvtt-${FOUNDRY_VERSION}.zip"
-    exit 1
+    log_error "[FATAL_CONFIG] Unable to install Foundry Virtual Tabletop!"
+    log_error "[FATAL_CONFIG] Either set FOUNDRY_RELEASE_URL."
+    log_error "[FATAL_CONFIG] Or set FOUNDRY_USERNAME and FOUNDRY_PASSWORD."
+    log_error "[FATAL_CONFIG] Or set CONTAINER_CACHE to a directory containing foundryvtt-${FOUNDRY_VERSION}.zip"
+    exit 3
   fi
 
   if [[ "${CONTAINER_CACHE:-}" ]]; then
@@ -291,8 +321,8 @@ END_OF_LINE
     # Check if CONTAINER_CACHE_SIZE is set and if so, ensure it's greater than 0
     if [[ -n "${CONTAINER_CACHE_SIZE:-}" ]]; then
       if ! [[ "${CONTAINER_CACHE_SIZE}" -gt 0 ]] 2> /dev/null; then
-        log_error "If set, CONTAINER_CACHE_SIZE must be 1 or greater.  Found: ${CONTAINER_CACHE_SIZE}"
-        exit 1
+        log_error "[FATAL_CONFIG] If set, CONTAINER_CACHE_SIZE must be 1 or greater.  Found: ${CONTAINER_CACHE_SIZE}"
+        exit 3
       fi
 
       log "Cleaning up cache directory: ${CONTAINER_CACHE}"
@@ -377,6 +407,7 @@ if [ ! -f "${LICENSE_FILE}" ]; then
     echo "{ \"license\": \"${FOUNDRY_LICENSE_KEY}\" }" | tr -d '-' > "${LICENSE_FILE}"
   elif [ -f ${cookiejar_file} ]; then
     log "Attempting to fetch license key from authenticated account."
+    set +e
     if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
       # FOUNDRY_LICENSE_KEY can be an index, try passing it.
       # CONTAINER_VERBOSE default value should not be quoted.
@@ -391,9 +422,24 @@ if [ ! -f "${LICENSE_FILE}" ]; then
         --user-agent="${node_user_agent}" \
         "${cookiejar_file}")
     fi
+    license_exit_code=$?
+    set -e
+
+    if [ ${license_exit_code} -ne 0 ]; then
+      if [ ${license_exit_code} -eq 2 ]; then
+        log_error "[FATAL_AUTH] License fetch failed (exit code 2).  Verify your credentials."
+        exit 2
+      elif [ ${license_exit_code} -eq 3 ]; then
+        log_error "[FATAL_CONFIG] No license keys found on account (exit code 3).  Check your FoundryVTT account."
+        exit 3
+      else
+        log_error "[RETRY] License fetch failed (exit code ${license_exit_code}).  Will retry after backoff."
+        exit "${license_exit_code}"
+      fi
+    fi
     echo "{ \"license\": \"${fetched_license_key}\" }" > "${LICENSE_FILE}"
   else
-    log_warn "Unable to apply a license key since neither a license key nor credentials were provided.  The license key will need to be entered in the browser."
+    log_warn "[FATAL_CONFIG] Unable to apply a license key since neither a license key nor credentials were provided.  The license key will need to be entered in the browser."
   fi
   set -o nounset
 else

@@ -9,7 +9,11 @@ The utility will print the release URL to standard out.
 EXIT STATUS
     This utility exits with one of the following values:
     0   Completed successfully.
-    >0  An error occurred.
+    1   Retriable error (transient network failure, HTTP 5xx, exhausted
+        retries fetching release URL).  The caller should retry after a
+        backoff period.
+    3   Non-retriable configuration error (unable to parse version string).
+        The caller should NOT retry — the version must be corrected.
 
 Usage:
   get_release_url.js [options] <cookiejar> <version>
@@ -54,6 +58,11 @@ const HEADERS: Headers = new Headers({
 });
 
 const INITIAL_RETRY_DELAY_S = 120; // 2 minutes
+
+// Exit codes — keep in sync with backoff.sh and entrypoint.sh.
+const EXIT_SUCCESS = 0;
+const EXIT_RETRY = 1;
+const EXIT_FATAL_CONFIG = 3;
 
 /**
  * ReleaseResponse - JSON response from the release URL endpoint.
@@ -114,7 +123,7 @@ async function fetchReleaseURL(
         // Check for a successful 200 response
         if (response.status !== 200) {
             logger.warn(
-                `Unexpected response ${response.status}: ${response.statusText}`,
+                `[RETRY] Unexpected response ${response.status}: ${response.statusText}`,
             );
             continue;
         }
@@ -125,7 +134,7 @@ async function fetchReleaseURL(
 
         return presigned_url;
     }
-    throw new Error(`Failed to fetch release URL.`);
+    throw new Error(`[RETRY] Failed to fetch release URL.`);
 }
 
 /**
@@ -158,10 +167,10 @@ async function main(): Promise<number> {
 
     if (!foundry_build) {
         logger.error(
-            `Unable to extract build number from version: ${foundry_version}`,
+            `[FATAL_CONFIG] Unable to extract build number from version: ${foundry_version}`,
         );
         throw new Error(
-            `Unable to extract build number from version: ${foundry_version}`,
+            `[FATAL_CONFIG] Unable to extract build number from version: ${foundry_version}`,
         );
     }
 
@@ -173,10 +182,10 @@ async function main(): Promise<number> {
 
     if (releaseURL) {
         process.stdout.write(releaseURL);
-        return 0;
+        return EXIT_SUCCESS;
     } else {
-        logger.error("Could not fetch a release URL.");
-        return -1;
+        logger.error("[RETRY] Could not fetch a release URL.");
+        return EXIT_RETRY;
     }
 }
 

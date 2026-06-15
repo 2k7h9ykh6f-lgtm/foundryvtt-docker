@@ -13,8 +13,6 @@ LOG_NAME="Launcher"
 
 # shellcheck source=src/logging.sh
 source logging.sh
-# shellcheck source=src/validate.sh
-source validate.sh
 
 # ensure the config directory exists
 log_debug "Ensuring ${CONFIG_DIR} directory exists."
@@ -68,7 +66,10 @@ if [[ "${FOUNDRY_NO_BACKUPS:-}" == "true" ]]; then
 fi
 
 if [[ "${FOUNDRY_SERVICE_KEY:-}" ]]; then
-  require_env "FOUNDRY_SERVICE_CONFIG" "service provider configuration (required when FOUNDRY_SERVICE_KEY is set)"
+  if [[ -z "${FOUNDRY_SERVICE_CONFIG:-}" ]]; then
+    log_error "FOUNDRY_SERVICE_KEY is set but FOUNDRY_SERVICE_CONFIG is not.  Both are required."
+    exit 1
+  fi
   log "FOUNDRY_SERVICE_KEY is set: Enabling service provider configuration."
   set -- "$@" --serviceKey="${FOUNDRY_SERVICE_KEY}"
 fi

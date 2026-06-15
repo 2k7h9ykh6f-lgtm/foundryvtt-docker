@@ -333,65 +333,200 @@ def test_no_cache_exits_0_on_sigterm() -> None:
     assert proc.returncode == 0, f"Expected exit 0 after SIGTERM, got {proc.returncode}"
 
 
-# ── Auth failure identical to generic failure ─────────────────────────────────
+# ── Fatal vs retriable classification ────────────────────────────────────────
 
 
-def test_auth_failure_same_delay_as_generic_failure(tmp_path: Path) -> None:
-    """An auth failure exit code produces the same delay as any other non-zero code.
+def test_is_fatal_exit_code() -> None:
+    """is_fatal_exit_code returns true for codes >= 2, false for 0 and 1.
 
-    Both produce consecutive_failures=1 from a clean state, so the resulting
-    state file is identical regardless of the exit code passed.
-    Validates: Requirements 6.1, 6.3
+    Validates: exit-code convention (FATAL_AUTH=2, FATAL_CONFIG=3).
     """
+    script = textwrap.dedent("""\
+        for code in 0 1; do
+          if is_fatal_exit_code "$code"; then
+            echo "code=$code fatal=true"
+          else
+            echo "code=$code fatal=false"
+          fi
+        done
+        for code in 2 3 4 255; do
+          if is_fatal_exit_code "$code"; then
+            echo "code=$code fatal=true"
+          else
+            echo "code=$code fatal=false"
+          fi
+        done
+    """)
+    result = _run(script)
+    lines = result.stdout.strip().splitlines()
+    assert "code=0 fatal=false" in lines
+    assert "code=1 fatal=false" in lines
+    assert "code=2 fatal=true" in lines
+    assert "code=3 fatal=true" in lines
+    assert "code=4 fatal=true" in lines
+    assert "code=255 fatal=true" in lines
 
-    def run_failure(exit_code: int, cache_dir: Path) -> dict:
-        script = textwrap.dedent(f"""\
-            CONTAINER_CACHE={cache_dir}
-            sleep() {{ :; }}
-            export -f sleep
-            backoff_on_failure {exit_code}
-        """)
-        _run(script)  # exits with exit_code, that's expected
-        return json.loads((cache_dir / "backoff_state.json").read_text())
 
-    auth_dir = tmp_path / "auth"
-    auth_dir.mkdir()
-    generic_dir = tmp_path / "generic"
-    generic_dir.mkdir()
+def test_fatal_category_name() -> None:
+    """fatal_category_name returns the correct label for known codes.
 
-    auth_state = run_failure(1, auth_dir)
-    generic_state = run_failure(2, generic_dir)
+    Validates: exit-code convention labels.
+    """
+    script = textwrap.dedent("""\
+        echo "$(fatal_category_name 2)"
+        echo "$(fatal_category_name 3)"
+        echo "$(fatal_category_name 99)"
+    """)
+    result = _run(script)
+    lines = result.stdout.strip().splitlines()
+    assert lines[0] == "FATAL_AUTH"
+    assert lines[1] == "FATAL_CONFIG"
+    assert "FATAL_UNKNOWN" in lines[2]
 
-    assert (
-        auth_state["consecutive_failures"] == generic_state["consecutive_failures"]
-    ), (
-        f"Auth failure count ({auth_state['consecutive_failures']}) differs from "
-        f"generic failure count ({generic_state['consecutive_failures']})"
+
+def test_retryable_failure_uses_backoff(tmp_path: Path) -> None:
+    """Exit code 1 (RETRY) follows normal exponential backoff and creates state file.
+
+    Validates: retriable path still works after fatal/retriable split.
+    """
+    script = textwrap.dedent(f"""\
+        CONTAINER_CACHE={tmp_path}
+        sleep() {{ :; }}
+        export -f sleep
+        backoff_on_failure 1
+    """)
+    result = _run(script)
+    assert result.returncode == 1
+
+    state_file = tmp_path / "backoff_state.json"
+    assert state_file.exists(), "State file should be created for retriable failure"
+    data = json.loads(state_file.read_text())
+    assert data["consecutive_failures"] == 1
+
+
+def test_fatal_auth_sleeps_indefinitely(tmp_path: Path) -> None:
+    """Exit code 2 (FATAL_AUTH) sleeps indefinitely without creating state file.
+
+    The process should remain alive until signalled.  No backoff state file
+    should be written because the operator must fix credentials manually.
+
+    Note: skipped on macOS because BSD sleep does not support 'sleep infinity'.
+    Validates: fatal auth path.
+    """
+    import platform
+
+    if platform.system() == "Darwin":
+        pytest.skip("sleep infinity not supported on macOS BSD sleep")
+
+    _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
+    script = textwrap.dedent(f"""\
+        cd '{SRC_DIR}'
+        {_log_stubs}
+        source backoff.sh
+        CONTAINER_CACHE={tmp_path}
+        trap 'kill $backoff_sleep_pid 2>/dev/null; exit 0' SIGTERM
+        backoff_on_failure 2
+    """)
+    env = {**os.environ}
+    env.pop("KUBERNETES_SERVICE_HOST", None)
+    proc = subprocess.Popen(
+        ["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
     )
+    time.sleep(0.5)
+    assert (
+        proc.poll() is None
+    ), "Process should still be running (sleeping indefinitely for FATAL_AUTH)"
+
+    state_file = tmp_path / "backoff_state.json"
+    assert not state_file.exists(), "FATAL_AUTH must not create a backoff state file"
+
+    proc.send_signal(__import__("signal").SIGTERM)
+    proc.wait(timeout=5)
+    assert proc.returncode == 0, "SIGTERM during fatal sleep should exit 0"
 
 
-def test_auth_failure_state_file_identical_to_generic(tmp_path: Path) -> None:
-    """Auth failure and generic failure produce identical state file contents.
+def test_fatal_config_sleeps_indefinitely(tmp_path: Path) -> None:
+    """Exit code 3 (FATAL_CONFIG) sleeps indefinitely without creating state file.
 
-    Validates: Requirements 6.1, 6.3
+    Note: skipped on macOS because BSD sleep does not support 'sleep infinity'.
+    Validates: fatal config path.
     """
+    import platform
 
-    def run_failure(exit_code: int, cache_dir: Path) -> dict:
-        script = textwrap.dedent(f"""\
-            CONTAINER_CACHE={cache_dir}
-            sleep() {{ :; }}
-            export -f sleep
-            backoff_on_failure {exit_code}
-        """)
-        _run(script)
-        return json.loads((cache_dir / "backoff_state.json").read_text())
+    if platform.system() == "Darwin":
+        pytest.skip("sleep infinity not supported on macOS BSD sleep")
 
-    auth_dir = tmp_path / "auth"
-    auth_dir.mkdir()
-    generic_dir = tmp_path / "generic"
-    generic_dir.mkdir()
+    _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
+    script = textwrap.dedent(f"""\
+        cd '{SRC_DIR}'
+        {_log_stubs}
+        source backoff.sh
+        CONTAINER_CACHE={tmp_path}
+        trap 'kill $backoff_sleep_pid 2>/dev/null; exit 0' SIGTERM
+        backoff_on_failure 3
+    """)
+    env = {**os.environ}
+    env.pop("KUBERNETES_SERVICE_HOST", None)
+    proc = subprocess.Popen(
+        ["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+    )
+    time.sleep(0.5)
+    assert (
+        proc.poll() is None
+    ), "Process should still be running (sleeping indefinitely for FATAL_CONFIG)"
 
-    auth_state = run_failure(1, auth_dir)
-    generic_state = run_failure(2, generic_dir)
+    state_file = tmp_path / "backoff_state.json"
+    assert not state_file.exists(), "FATAL_CONFIG must not create a backoff state file"
 
-    assert auth_state["consecutive_failures"] == generic_state["consecutive_failures"]
+    proc.send_signal(__import__("signal").SIGTERM)
+    proc.wait(timeout=5)
+
+
+def test_kubernetes_fatal_still_returns_immediately(tmp_path: Path) -> None:
+    """Kubernetes bypass applies to fatal codes too — no state file, no sleep.
+
+    Validates: K8s CrashLoopBackOff handles all exit codes.
+    """
+    script = textwrap.dedent(f"""\
+        CONTAINER_CACHE={tmp_path}
+        backoff_on_failure 2
+    """)
+    result = _run(script, env={"KUBERNETES_SERVICE_HOST": "10.0.0.1"})
+    assert result.returncode == 0, result.stderr
+
+    state_file = tmp_path / "backoff_state.json"
+    assert not state_file.exists(), "Kubernetes path must not create state file for fatal codes"
+
+
+def test_fatal_auth_exits_0_after_sigterm(tmp_path: Path) -> None:
+    """FATAL_AUTH indefinite sleep responds to SIGTERM with exit 0.
+
+    Validates: clean shutdown path for fatal errors.
+    """
+    import platform
+
+    if platform.system() == "Darwin":
+        pytest.skip("sleep infinity not supported on macOS BSD sleep")
+
+    _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
+    script = textwrap.dedent(f"""\
+        cd '{SRC_DIR}'
+        {_log_stubs}
+        source backoff.sh
+        CONTAINER_CACHE={tmp_path}
+        trap 'kill $backoff_sleep_pid 2>/dev/null; exit 0' SIGTERM
+        backoff_on_failure 2
+    """)
+    env = {**os.environ}
+    env.pop("KUBERNETES_SERVICE_HOST", None)
+    proc = subprocess.Popen(
+        ["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+    )
+    time.sleep(0.3)
+    proc.send_signal(__import__("signal").SIGTERM)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        pytest.fail("Process did not exit within 5s after SIGTERM")
+    assert proc.returncode == 0, f"Expected exit 0 after SIGTERM, got {proc.returncode}"
