@@ -1,0 +1,100 @@
+---
+# For most projects, this workflow file will not need changing; you simply need
+# to commit it to your repository.
+#
+# You may wish to alter this file to override the set of languages analyzed,
+# or to provide custom queries or build logic.
+name: CodeQL
+
+on: # yamllint disable-line rule:truthy
+  merge_group:
+    types:
+      - checks_requested
+  pull_request:
+    # The branches here must be a subset of the ones in the push key
+    branches:
+      - develop
+      - develop-prerelease
+  push:
+    # Dependabot-triggered push events have read-only access, but uploading code
+    # scanning requires write access.
+    branches-ignore:
+      - dependabot/**
+  schedule:
+    - cron: 31 7 * * 2
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  diagnostics:
+    name: Run Diagnostics
+    uses: felddy/reusable-workflows/.github/workflows/diagnostics.yml@76486c28caa391f5f9db4941fc555a20a6e084c8 # tag=v4.2.0
+  analyze:
+    name: Analyze
+    needs:
+      - diagnostics
+    runs-on: ubuntu-latest
+    permissions:
+      # actions/checkout needs this to fetch code
+      contents: read
+      # required for all workflows
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Override automatic language detection by changing the below
+        # list
+        #
+        # Supported options are actions, c-cpp, csharp, go,
+        # java-kotlin, javascript-typescript, python, ruby, and swift.
+        language:
+          - actions
+          - javascript-typescript
+          - python
+        # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript',
+        # 'python', 'ruby' ] Learn more about CodeQL language support at
+        # https://git.io/codeql-language-support
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # tag=v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            *.github.com:443
+            *.githubapp.com:443
+            *.githubusercontent.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            pypi.org:443
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag=v6.0.2
+
+      # Initializes the CodeQL tools for scanning.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # tag=v4.36.0
+        with:
+          languages: ${{ matrix.language }}
+
+      # Autobuild attempts to build any compiled languages (C/C++, C#, or
+      # Java). If this step fails, then you should remove it and run the build
+      # manually (see below).
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # tag=v4.36.0
+
+      # ℹ️ Command-line programs to run using the OS shell. 📚
+      # https://git.io/JvXDl
+
+      # ✏️ If the Autobuild fails above, remove it and uncomment the following
+      #    three lines and modify them (or add more) to build your code if your
+      #    project uses a compiled language
+
+      # - run: |
+      #     make bootstrap
+      #     make release
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # tag=v4.36.0
