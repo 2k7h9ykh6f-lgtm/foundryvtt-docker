@@ -17,6 +17,8 @@ LOG_NAME="Entrypoint"
 source logging.sh
 # shellcheck source=src/backoff.sh
 source backoff.sh
+# shellcheck source=src/validate.sh
+source validate.sh
 
 # ── Trap handlers ─────────────────────────────────────────────────────────────
 
@@ -97,34 +99,7 @@ mount_info=$(findmnt -n -o SOURCE,FSTYPE,OPTIONS --target "${DATA_DIR}")
 log_debug "Mount info for ${DATA_DIR}: ${mount_info}"
 
 # Test volume permissions
-permissions_test_file="${DATA_DIR}/.container-permissions-test.txt"
-permission_test_failed=0
-log_debug "Testing permissions on ${permissions_test_file}"
-if ! touch "${permissions_test_file}" 2> /dev/null; then
-  log_error "Volume write test failed."
-  permission_test_failed=1
-else
-  log_debug "Volume write test succeeded."
-fi
-if ! cat "${permissions_test_file}" > /dev/null 2>&1; then
-  log_error "Volume read test failed."
-  permission_test_failed=1
-else
-  log_debug "Volume read test succeeded."
-fi
-if ! rm -f "${permissions_test_file}" 2> /dev/null; then
-  log_error "Volume delete test failed."
-  permission_test_failed=1
-else
-  log_debug "Volume delete test succeeded."
-fi
-if [ "${permission_test_failed}" -ne 0 ]; then
-  log_error "Aborting due to insufficient permissions on ${DATA_DIR}"
-  log_error "Container running as uid:gid: $(id -u):$(id -g)"
-  log_error "For more information see the discussion at: https://github.com/felddy/foundryvtt-docker/discussions/1197"
-  exit 1
-fi
-log_debug "All permissions tests succeeded."
+require_writable_dir "${DATA_DIR}" "data volume"
 
 cookiejar_file="/tmp/cookiejar.json"
 license_min_length=24
