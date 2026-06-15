@@ -51,21 +51,6 @@ const AGENT = new ProxyAgent();
 const BASE_URL: string = "https://foundryvtt.com";
 const LOCAL_DOMAIN: string = "felddy.com";
 
-// Unified exit codes (shared convention with backoff.sh and entrypoint.sh)
-const EXIT_RETRYABLE = 1;
-const EXIT_NON_RETRYABLE = 2;
-
-/**
- * AuthError — thrown when the server returns 401/403, indicating
- * the session has expired or credentials are invalid.
- */
-class AuthError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "AuthError";
-    }
-}
-
 const HEADERS: Headers = new Headers({
     DNT: "1",
     Referer: BASE_URL,
@@ -89,14 +74,7 @@ async function fetchLicenses(username: string): Promise<string[]> {
         method: "GET",
     });
     if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-            throw new AuthError(
-                `Authentication failed (HTTP ${response.status}) — session may have expired`,
-            );
-        }
-        throw new Error(
-            `Unexpected response ${response.status}: ${response.statusText}`,
-        );
+        throw new Error(`Unexpected response ${response.statusText}`);
     }
     const body = await response.text();
     const $ = cheerio.load(body);
@@ -138,32 +116,22 @@ async function main(): Promise<number> {
     const local_cookies = cookieJar.getCookiesSync(`http://${LOCAL_DOMAIN}`);
     if (local_cookies.length != 1) {
         logger.error(
-            `[NON_RETRYABLE] Wrong number of cookies found for ${LOCAL_DOMAIN}.  Expected 1, found ${local_cookies.length}`,
+            `Wrong number of cookies found for ${LOCAL_DOMAIN}.  Expected 1, found ${local_cookies.length}`,
         );
-        return EXIT_NON_RETRYABLE;
+        return -1;
     }
     const loggedInUsername = local_cookies[0].value;
 
     // Attempt to fetch a license key.
-    let license_keys: string[];
-    try {
-        license_keys = await fetchLicenses(loggedInUsername);
-    } catch (err: any) {
-        if (err instanceof AuthError) {
-            logger.error(`[NON_RETRYABLE] ${err.message}`);
-            return EXIT_NON_RETRYABLE;
-        }
-        logger.error(`[RETRYABLE] Failed to fetch licenses: ${err.message}`);
-        return EXIT_RETRYABLE;
-    }
+    const license_keys = await fetchLicenses(loggedInUsername);
     const key_count = license_keys.length;
 
     // Handle no license keys found.
     if (key_count == 0) {
         logger.error(
-            `[NON_RETRYABLE] Could not find any license keys associated with account ${loggedInUsername}`,
+            `Could not find any license keys associated with account ${loggedInUsername}`,
         );
-        return EXIT_NON_RETRYABLE;
+        return -1;
     } else {
         logger.info(
             `Found ${key_count} license ${

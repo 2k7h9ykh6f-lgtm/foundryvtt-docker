@@ -55,21 +55,6 @@ const HEADERS: Headers = new Headers({
 
 const INITIAL_RETRY_DELAY_S = 120; // 2 minutes
 
-// Unified exit codes (shared convention with backoff.sh and entrypoint.sh)
-const EXIT_RETRYABLE = 1;
-const EXIT_NON_RETRYABLE = 2;
-
-/**
- * AuthError — thrown when the server returns 401/403, indicating
- * the session has expired or credentials are invalid.
- */
-class AuthError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "AuthError";
-    }
-}
-
 /**
  * ReleaseResponse - JSON response from the release URL endpoint.
  */
@@ -128,14 +113,8 @@ async function fetchReleaseURL(
         });
         // Check for a successful 200 response
         if (response.status !== 200) {
-            // Auth failures are non-retryable — break immediately.
-            if (response.status === 401 || response.status === 403) {
-                throw new AuthError(
-                    `Authentication failed (HTTP ${response.status}) — session may have expired`,
-                );
-            }
             logger.warn(
-                `[RETRYABLE] Unexpected response ${response.status}: ${response.statusText}`,
+                `Unexpected response ${response.status}: ${response.statusText}`,
             );
             continue;
         }
@@ -187,24 +166,17 @@ async function main(): Promise<number> {
     }
 
     // Generate a presigned URL and print it to stdout.
-    let releaseURL: string | null;
-    try {
-        releaseURL = await fetchReleaseURL(foundry_build, retries);
-    } catch (err: any) {
-        if (err instanceof AuthError) {
-            logger.error(`[NON_RETRYABLE] ${err.message}`);
-            return EXIT_NON_RETRYABLE;
-        }
-        logger.error(`[RETRYABLE] ${err.message}`);
-        return EXIT_RETRYABLE;
-    }
+    const releaseURL: string | null = await fetchReleaseURL(
+        foundry_build,
+        retries,
+    );
 
     if (releaseURL) {
         process.stdout.write(releaseURL);
         return 0;
     } else {
-        logger.error("[RETRYABLE] Could not fetch a release URL.");
-        return EXIT_RETRYABLE;
+        logger.error("Could not fetch a release URL.");
+        return -1;
     }
 }
 

@@ -201,34 +201,15 @@ if [ $install_required = true ]; then
     set -e
 
     if [ ${auth_exit_code} -ne 0 ]; then
-      if [ ${auth_exit_code} -eq 2 ]; then
-        log_error "[NON_RETRYABLE] Authentication failed — check FOUNDRY_USERNAME and FOUNDRY_PASSWORD."
-      else
-        log_warn "[RETRYABLE] Authentication failed with exit code ${auth_exit_code}."
-      fi
+      log_warn "Authentication failed with exit code ${auth_exit_code}."
       rm -f "${cookiejar_file}"
-      # If no presigned URL was provided, there is no way to proceed.
-      if [[ ! "${presigned_url:-}" ]]; then
-        exit ${auth_exit_code}
-      fi
     elif [[ ! "${presigned_url:-}" ]]; then
       # If the presigned_url wasn't set by FOUNDRY_RELEASE_URL generate one now.
       log "Using authenticated credentials to fetch release URL."
-      set +e
       presigned_url=$(./get_release_url.js ${CONTAINER_VERBOSE+--log-level=debug} \
         ${CONTAINER_URL_FETCH_RETRY+--retry=${CONTAINER_URL_FETCH_RETRY}} \
         --user-agent="${node_user_agent}" \
         "${cookiejar_file}" "${FOUNDRY_VERSION}")
-      release_url_exit_code=$?
-      set -e
-      if [ ${release_url_exit_code} -ne 0 ]; then
-        if [ ${release_url_exit_code} -eq 2 ]; then
-          log_error "[NON_RETRYABLE] Failed to fetch release URL — authentication or permission issue."
-        else
-          log_warn "[RETRYABLE] Failed to fetch release URL (exit code ${release_url_exit_code})."
-        fi
-        presigned_url=""
-      fi
     fi
   fi
 
@@ -421,7 +402,6 @@ if [ ! -f "${LICENSE_FILE}" ]; then
     echo "{ \"license\": \"${FOUNDRY_LICENSE_KEY}\" }" | tr -d '-' > "${LICENSE_FILE}"
   elif [ -f ${cookiejar_file} ]; then
     log "Attempting to fetch license key from authenticated account."
-    set +e
     if [[ "${FOUNDRY_LICENSE_KEY:-}" ]]; then
       # FOUNDRY_LICENSE_KEY can be an index, try passing it.
       # CONTAINER_VERBOSE default value should not be quoted.
@@ -435,16 +415,6 @@ if [ ! -f "${LICENSE_FILE}" ]; then
       fetched_license_key=$(./get_license.js ${CONTAINER_VERBOSE+--log-level=debug} \
         --user-agent="${node_user_agent}" \
         "${cookiejar_file}")
-    fi
-    license_exit_code=$?
-    set -e
-    if [ ${license_exit_code} -ne 0 ]; then
-      if [ ${license_exit_code} -eq 2 ]; then
-        log_error "[NON_RETRYABLE] Failed to fetch license key — authentication or account issue."
-      else
-        log_warn "[RETRYABLE] Failed to fetch license key (exit code ${license_exit_code})."
-      fi
-      exit ${license_exit_code}
     fi
     echo "{ \"license\": \"${fetched_license_key}\" }" > "${LICENSE_FILE}"
   else
