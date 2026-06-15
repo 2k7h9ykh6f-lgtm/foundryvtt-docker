@@ -1,0 +1,18 @@
+---
+# Configuration file for the Bandit python security scanner
+# https://bandit.readthedocs.io/en/latest/config.html
+
+# Tests are first included by `tests`, and then excluded by `skips`.
+# If `tests` is empty, all tests are considered included.
+
+tests:
+# - B101
+# - B102
+
+# These skips are required for the tests suite.
+# They are not applied to the production code.
+skips:
+  - B101 # use of assert detected
+  - B404 # security implications associated with the subprocess module
+  - B603 # subprocess call - check for execution of untrusted input
+  - B607 # starting a process with a partial executable path
