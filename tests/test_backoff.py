@@ -333,200 +333,56 @@ def test_no_cache_exits_0_on_sigterm() -> None:
     assert proc.returncode == 0, f"Expected exit 0 after SIGTERM, got {proc.returncode}"
 
 
-# ── Fatal vs retriable classification ────────────────────────────────────────
+# ── Non-retryable auth failure bypass ────────────────────────────────────────
 
 
-def test_is_fatal_exit_code() -> None:
-    """is_fatal_exit_code returns true for codes >= 2, false for 0 and 1.
+def test_non_retryable_skips_backoff(tmp_path: Path) -> None:
+    """Exit code 2 (non-retryable) skips backoff entirely — no state file, no sleep.
 
-    Validates: exit-code convention (FATAL_AUTH=2, FATAL_CONFIG=3).
-    """
-    script = textwrap.dedent("""\
-        for code in 0 1; do
-          if is_fatal_exit_code "$code"; then
-            echo "code=$code fatal=true"
-          else
-            echo "code=$code fatal=false"
-          fi
-        done
-        for code in 2 3 4 255; do
-          if is_fatal_exit_code "$code"; then
-            echo "code=$code fatal=true"
-          else
-            echo "code=$code fatal=false"
-          fi
-        done
-    """)
-    result = _run(script)
-    lines = result.stdout.strip().splitlines()
-    assert "code=0 fatal=false" in lines
-    assert "code=1 fatal=false" in lines
-    assert "code=2 fatal=true" in lines
-    assert "code=3 fatal=true" in lines
-    assert "code=4 fatal=true" in lines
-    assert "code=255 fatal=true" in lines
-
-
-def test_fatal_category_name() -> None:
-    """fatal_category_name returns the correct label for known codes.
-
-    Validates: exit-code convention labels.
-    """
-    script = textwrap.dedent("""\
-        echo "$(fatal_category_name 2)"
-        echo "$(fatal_category_name 3)"
-        echo "$(fatal_category_name 99)"
-    """)
-    result = _run(script)
-    lines = result.stdout.strip().splitlines()
-    assert lines[0] == "FATAL_AUTH"
-    assert lines[1] == "FATAL_CONFIG"
-    assert "FATAL_UNKNOWN" in lines[2]
-
-
-def test_retryable_failure_uses_backoff(tmp_path: Path) -> None:
-    """Exit code 1 (RETRY) follows normal exponential backoff and creates state file.
-
-    Validates: retriable path still works after fatal/retriable split.
+    Validates: Non-retryable failures exit immediately without touching state.
     """
     script = textwrap.dedent(f"""\
         CONTAINER_CACHE={tmp_path}
         sleep() {{ :; }}
         export -f sleep
-        backoff_on_failure 1
+        backoff_on_failure 2
     """)
     result = _run(script)
-    assert result.returncode == 1
-
-    state_file = tmp_path / "backoff_state.json"
-    assert state_file.exists(), "State file should be created for retriable failure"
-    data = json.loads(state_file.read_text())
-    assert data["consecutive_failures"] == 1
-
-
-def test_fatal_auth_sleeps_indefinitely(tmp_path: Path) -> None:
-    """Exit code 2 (FATAL_AUTH) sleeps indefinitely without creating state file.
-
-    The process should remain alive until signalled.  No backoff state file
-    should be written because the operator must fix credentials manually.
-
-    Note: skipped on macOS because BSD sleep does not support 'sleep infinity'.
-    Validates: fatal auth path.
-    """
-    import platform
-
-    if platform.system() == "Darwin":
-        pytest.skip("sleep infinity not supported on macOS BSD sleep")
-
-    _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
-    script = textwrap.dedent(f"""\
-        cd '{SRC_DIR}'
-        {_log_stubs}
-        source backoff.sh
-        CONTAINER_CACHE={tmp_path}
-        trap 'kill $backoff_sleep_pid 2>/dev/null; exit 0' SIGTERM
-        backoff_on_failure 2
-    """)
-    env = {**os.environ}
-    env.pop("KUBERNETES_SERVICE_HOST", None)
-    proc = subprocess.Popen(
-        ["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
-    )
-    time.sleep(0.5)
     assert (
-        proc.poll() is None
-    ), "Process should still be running (sleeping indefinitely for FATAL_AUTH)"
+        result.returncode == 2
+    ), f"Expected exit 2, got {result.returncode}. stderr: {result.stderr}"
 
     state_file = tmp_path / "backoff_state.json"
-    assert not state_file.exists(), "FATAL_AUTH must not create a backoff state file"
-
-    proc.send_signal(__import__("signal").SIGTERM)
-    proc.wait(timeout=5)
-    assert proc.returncode == 0, "SIGTERM during fatal sleep should exit 0"
-
-
-def test_fatal_config_sleeps_indefinitely(tmp_path: Path) -> None:
-    """Exit code 3 (FATAL_CONFIG) sleeps indefinitely without creating state file.
-
-    Note: skipped on macOS because BSD sleep does not support 'sleep infinity'.
-    Validates: fatal config path.
-    """
-    import platform
-
-    if platform.system() == "Darwin":
-        pytest.skip("sleep infinity not supported on macOS BSD sleep")
-
-    _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
-    script = textwrap.dedent(f"""\
-        cd '{SRC_DIR}'
-        {_log_stubs}
-        source backoff.sh
-        CONTAINER_CACHE={tmp_path}
-        trap 'kill $backoff_sleep_pid 2>/dev/null; exit 0' SIGTERM
-        backoff_on_failure 3
-    """)
-    env = {**os.environ}
-    env.pop("KUBERNETES_SERVICE_HOST", None)
-    proc = subprocess.Popen(
-        ["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+    assert not state_file.exists(), (
+        "State file must not be created for non-retryable failures (exit code 2)"
     )
-    time.sleep(0.5)
-    assert (
-        proc.poll() is None
-    ), "Process should still be running (sleeping indefinitely for FATAL_CONFIG)"
-
-    state_file = tmp_path / "backoff_state.json"
-    assert not state_file.exists(), "FATAL_CONFIG must not create a backoff state file"
-
-    proc.send_signal(__import__("signal").SIGTERM)
-    proc.wait(timeout=5)
 
 
-def test_kubernetes_fatal_still_returns_immediately(tmp_path: Path) -> None:
-    """Kubernetes bypass applies to fatal codes too — no state file, no sleep.
+def test_retryable_creates_state_but_non_retryable_does_not(tmp_path: Path) -> None:
+    """Exit code 1 (retryable) creates a state file; exit code 2 does not.
 
-    Validates: K8s CrashLoopBackOff handles all exit codes.
+    Validates: The backoff layer correctly distinguishes retryable from
+    non-retryable failures.
     """
-    script = textwrap.dedent(f"""\
-        CONTAINER_CACHE={tmp_path}
-        backoff_on_failure 2
-    """)
-    result = _run(script, env={"KUBERNETES_SERVICE_HOST": "10.0.0.1"})
-    assert result.returncode == 0, result.stderr
 
-    state_file = tmp_path / "backoff_state.json"
-    assert not state_file.exists(), "Kubernetes path must not create state file for fatal codes"
+    def run_failure(exit_code: int, cache_dir: Path) -> bool:
+        script = textwrap.dedent(f"""\
+            CONTAINER_CACHE={cache_dir}
+            sleep() {{ :; }}
+            export -f sleep
+            backoff_on_failure {exit_code}
+        """)
+        _run(script)
+        return (cache_dir / "backoff_state.json").exists()
 
+    retryable_dir = tmp_path / "retryable"
+    retryable_dir.mkdir()
+    non_retryable_dir = tmp_path / "non_retryable"
+    non_retryable_dir.mkdir()
 
-def test_fatal_auth_exits_0_after_sigterm(tmp_path: Path) -> None:
-    """FATAL_AUTH indefinite sleep responds to SIGTERM with exit 0.
-
-    Validates: clean shutdown path for fatal errors.
-    """
-    import platform
-
-    if platform.system() == "Darwin":
-        pytest.skip("sleep infinity not supported on macOS BSD sleep")
-
-    _log_stubs = "log(){ :; }; log_debug(){ :; }; log_warn(){ :; }; log_error(){ :; }"
-    script = textwrap.dedent(f"""\
-        cd '{SRC_DIR}'
-        {_log_stubs}
-        source backoff.sh
-        CONTAINER_CACHE={tmp_path}
-        trap 'kill $backoff_sleep_pid 2>/dev/null; exit 0' SIGTERM
-        backoff_on_failure 2
-    """)
-    env = {**os.environ}
-    env.pop("KUBERNETES_SERVICE_HOST", None)
-    proc = subprocess.Popen(
-        ["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+    assert run_failure(1, retryable_dir), (
+        "Retryable failure (exit 1) must create a state file"
     )
-    time.sleep(0.3)
-    proc.send_signal(__import__("signal").SIGTERM)
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        pytest.fail("Process did not exit within 5s after SIGTERM")
-    assert proc.returncode == 0, f"Expected exit 0 after SIGTERM, got {proc.returncode}"
+    assert not run_failure(2, non_retryable_dir), (
+        "Non-retryable failure (exit 2) must not create a state file"
+    )

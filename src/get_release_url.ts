@@ -9,11 +9,7 @@ The utility will print the release URL to standard out.
 EXIT STATUS
     This utility exits with one of the following values:
     0   Completed successfully.
-    1   Retriable error (transient network failure, HTTP 5xx, exhausted
-        retries fetching release URL).  The caller should retry after a
-        backoff period.
-    3   Non-retriable configuration error (unable to parse version string).
-        The caller should NOT retry — the version must be corrected.
+    >0  An error occurred.
 
 Usage:
   get_release_url.js [options] <cookiejar> <version>
@@ -59,10 +55,20 @@ const HEADERS: Headers = new Headers({
 
 const INITIAL_RETRY_DELAY_S = 120; // 2 minutes
 
-// Exit codes — keep in sync with backoff.sh and entrypoint.sh.
-const EXIT_SUCCESS = 0;
-const EXIT_RETRY = 1;
-const EXIT_FATAL_CONFIG = 3;
+// Unified exit codes (shared convention with backoff.sh and entrypoint.sh)
+const EXIT_RETRYABLE = 1;
+const EXIT_NON_RETRYABLE = 2;
+
+/**
+ * AuthError — thrown when the server returns 401/403, indicating
+ * the session has expired or credentials are invalid.
+ */
+class AuthError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "AuthError";
+    }
+}
 
 /**
  * ReleaseResponse - JSON response from the release URL endpoint.
@@ -122,8 +128,14 @@ async function fetchReleaseURL(
         });
         // Check for a successful 200 response
         if (response.status !== 200) {
+            // Auth failures are non-retryable — break immediately.
+            if (response.status === 401 || response.status === 403) {
+                throw new AuthError(
+                    `Authentication failed (HTTP ${response.status}) — session may have expired`,
+                );
+            }
             logger.warn(
-                `[RETRY] Unexpected response ${response.status}: ${response.statusText}`,
+                `[RETRYABLE] Unexpected response ${response.status}: ${response.statusText}`,
             );
             continue;
         }
@@ -134,7 +146,7 @@ async function fetchReleaseURL(
 
         return presigned_url;
     }
-    throw new Error(`[RETRY] Failed to fetch release URL.`);
+    throw new Error(`Failed to fetch release URL.`);
 }
 
 /**
@@ -167,25 +179,32 @@ async function main(): Promise<number> {
 
     if (!foundry_build) {
         logger.error(
-            `[FATAL_CONFIG] Unable to extract build number from version: ${foundry_version}`,
+            `Unable to extract build number from version: ${foundry_version}`,
         );
         throw new Error(
-            `[FATAL_CONFIG] Unable to extract build number from version: ${foundry_version}`,
+            `Unable to extract build number from version: ${foundry_version}`,
         );
     }
 
     // Generate a presigned URL and print it to stdout.
-    const releaseURL: string | null = await fetchReleaseURL(
-        foundry_build,
-        retries,
-    );
+    let releaseURL: string | null;
+    try {
+        releaseURL = await fetchReleaseURL(foundry_build, retries);
+    } catch (err: any) {
+        if (err instanceof AuthError) {
+            logger.error(`[NON_RETRYABLE] ${err.message}`);
+            return EXIT_NON_RETRYABLE;
+        }
+        logger.error(`[RETRYABLE] ${err.message}`);
+        return EXIT_RETRYABLE;
+    }
 
     if (releaseURL) {
         process.stdout.write(releaseURL);
-        return EXIT_SUCCESS;
+        return 0;
     } else {
-        logger.error("[RETRY] Could not fetch a release URL.");
-        return EXIT_RETRY;
+        logger.error("[RETRYABLE] Could not fetch a release URL.");
+        return EXIT_RETRYABLE;
     }
 }
 

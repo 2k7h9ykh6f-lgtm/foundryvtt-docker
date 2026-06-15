@@ -9,12 +9,7 @@ The utility will print a license key to standard out.
 EXIT STATUS
     This utility exits with one of the following values:
     0   Completed successfully.
-    1   Retriable error (transient network failure, HTTP 5xx, empty response).
-        The caller should retry after a backoff period.
-    2   Non-retriable authentication error (HTTP 4xx, invalid or missing
-        cookies).  The caller should NOT retry — credentials must be fixed.
-    3   Non-retriable configuration error (no license keys associated with
-        the account).  The caller should NOT retry — account must be fixed.
+    >0  An error occurred.
 
 Usage:
   get_license.js [options] <cookiejar>
@@ -56,15 +51,20 @@ const AGENT = new ProxyAgent();
 const BASE_URL: string = "https://foundryvtt.com";
 const LOCAL_DOMAIN: string = "felddy.com";
 
-// Exit codes — keep in sync with backoff.sh and entrypoint.sh.
-// 0 = success
-// 1 = retriable (network/5xx) — backoff will retry
-// 2 = fatal auth (bad cookies, 4xx) — backoff sleeps indefinitely
-// 3 = fatal config (no keys on account) — backoff sleeps indefinitely
-const EXIT_SUCCESS = 0;
-const EXIT_RETRY = 1;
-const EXIT_FATAL_AUTH = 2;
-const EXIT_FATAL_CONFIG = 3;
+// Unified exit codes (shared convention with backoff.sh and entrypoint.sh)
+const EXIT_RETRYABLE = 1;
+const EXIT_NON_RETRYABLE = 2;
+
+/**
+ * AuthError — thrown when the server returns 401/403, indicating
+ * the session has expired or credentials are invalid.
+ */
+class AuthError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "AuthError";
+    }
+}
 
 const HEADERS: Headers = new Headers({
     DNT: "1",
@@ -78,8 +78,6 @@ const HEADERS: Headers = new Headers({
  *
  * @param  {string} username Username (not e-mail address) of license owner.
  * @return {string[]}        License keys formatted without dashes.
- * @throws {Error}           On HTTP errors; error.message includes status info
- *                           so callers can classify retriable vs. fatal.
  */
 async function fetchLicenses(username: string): Promise<string[]> {
     logger.info("Fetching licenses.");
@@ -91,9 +89,13 @@ async function fetchLicenses(username: string): Promise<string[]> {
         method: "GET",
     });
     if (!response.ok) {
-        // Embed the HTTP status so the caller can distinguish 4xx vs 5xx.
+        if (response.status === 401 || response.status === 403) {
+            throw new AuthError(
+                `Authentication failed (HTTP ${response.status}) — session may have expired`,
+            );
+        }
         throw new Error(
-            `HTTP ${response.status} ${response.statusText}`,
+            `Unexpected response ${response.status}: ${response.statusText}`,
         );
     }
     const body = await response.text();
@@ -136,9 +138,9 @@ async function main(): Promise<number> {
     const local_cookies = cookieJar.getCookiesSync(`http://${LOCAL_DOMAIN}`);
     if (local_cookies.length != 1) {
         logger.error(
-            `[FATAL_AUTH] Wrong number of cookies found for ${LOCAL_DOMAIN}.  Expected 1, found ${local_cookies.length}`,
+            `[NON_RETRYABLE] Wrong number of cookies found for ${LOCAL_DOMAIN}.  Expected 1, found ${local_cookies.length}`,
         );
-        return EXIT_FATAL_AUTH;
+        return EXIT_NON_RETRYABLE;
     }
     const loggedInUsername = local_cookies[0].value;
 
@@ -146,29 +148,22 @@ async function main(): Promise<number> {
     let license_keys: string[];
     try {
         license_keys = await fetchLicenses(loggedInUsername);
-    } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        // Classify based on whether the error message starts with "HTTP 4xx".
-        // 4xx = auth/permission problem (fatal); anything else = retriable.
-        if (/^HTTP 4\d{2}/.test(message)) {
-            logger.error(
-                `[FATAL_AUTH] License fetch failed for ${loggedInUsername}: ${message}`,
-            );
-            return EXIT_FATAL_AUTH;
+    } catch (err: any) {
+        if (err instanceof AuthError) {
+            logger.error(`[NON_RETRYABLE] ${err.message}`);
+            return EXIT_NON_RETRYABLE;
         }
-        logger.error(
-            `[RETRY] License fetch failed for ${loggedInUsername}: ${message}`,
-        );
-        return EXIT_RETRY;
+        logger.error(`[RETRYABLE] Failed to fetch licenses: ${err.message}`);
+        return EXIT_RETRYABLE;
     }
     const key_count = license_keys.length;
 
     // Handle no license keys found.
     if (key_count == 0) {
         logger.error(
-            `[FATAL_CONFIG] Could not find any license keys associated with account ${loggedInUsername}`,
+            `[NON_RETRYABLE] Could not find any license keys associated with account ${loggedInUsername}`,
         );
-        return EXIT_FATAL_CONFIG;
+        return EXIT_NON_RETRYABLE;
     } else {
         logger.info(
             `Found ${key_count} license ${
@@ -181,7 +176,7 @@ async function main(): Promise<number> {
     if (key_count == 1) {
         logger.debug("Returning single license.");
         process.stdout.write(license_keys[0]);
-        return EXIT_SUCCESS;
+        return 0;
     }
 
     // Handle multiple licenses keys found.
@@ -193,7 +188,7 @@ async function main(): Promise<number> {
         select_index = Math.floor(Math.random() * key_count) + 1;
         logger.info(`License key #${select_index} randomly selected.`);
         process.stdout.write(license_keys[select_index - 1]);
-        return EXIT_SUCCESS;
+        return 0;
     } else {
         // mode is integer
         select_index = parseInt(select_mode);
@@ -211,7 +206,7 @@ async function main(): Promise<number> {
         }
         logger.info(`License key #${select_index} selected by user.`);
         process.stdout.write(license_keys[select_index - 1]);
-        return EXIT_SUCCESS;
+        return 0;
     }
 }
 
