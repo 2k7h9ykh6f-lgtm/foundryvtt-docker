@@ -90,6 +90,7 @@ COPY \
   src/entrypoint.sh \
   src/launcher.sh \
   src/logging.sh \
+  src/validate.sh \
   ./
 RUN mkdir -p resources /data \
   && chmod a+rx /home/node \
