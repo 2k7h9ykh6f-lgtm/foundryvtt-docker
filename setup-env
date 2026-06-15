@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+
+set -o nounset
+set -o errexit
+set -o pipefail
+
+USAGE=$(
+  cat << 'END_OF_LINE'
+Configure a development environment for this repository.
+
+It does the following:
+  - Allows the user to specify the Python version to use for the virtual environment.
+  - Creates the Python virtual environment using uv.
+  - Installs the requirements needed for development.
+  - Installs git pre-commit hooks.
+  - Configures git remotes for upstream "lineage" repositories.
+
+Usage:
+  setup-env [--python-version python_version]
+  setup-env (-h | --help)
+
+Options:
+  -f | --force             Delete virtual environment if it already exists.
+  -h | --help              Show this message.
+  -i | --install-hooks     Install hook environments for all environments in the
+                           pre-commit config file.
+  -l | --list-versions     List available Python versions.
+  -p | --python-version    Specify the Python version for the virtual environment.
+
+END_OF_LINE
+)
+
+# Flag to force deletion and recreation of virtual environment
+FORCE=0
+
+# Initialize the other flags
+INSTALL_HOOKS=0
+LIST_VERSIONS=0
+PYTHON_VERSION=""
+
+# Define long options
+LONGOPTS="force,help,install-hooks,list-versions,python-version:"
+
+# Define short options for getopt
+SHORTOPTS="fhilp:"
+
+# Check for GNU getopt by testing for long option support. GNU getopt supports
+# the "--test" option and will return exit code 4 while POSIX/BSD getopt does
+# not and will return exit code 0.
+if getopt --test > /dev/null 2>&1; then
+  cat << 'END_OF_LINE'
+
+  Please note, this script requires GNU getopt due to its enhanced
+  functionality and compatibility with certain script features that
+  are not supported by the POSIX getopt found in some systems, particularly
+  those with a non-GNU version of getopt. This distinction is crucial
+  as a system might have a non-GNU version of getopt installed by default,
+  which could lead to unexpected behavior.
+
+  On macOS, we recommend installing brew (https://brew.sh/).  Then installation
+  is as simple as `brew install gnu-getopt` and adding this to your
+  profile:
+
+  export PATH="$(brew --prefix)/opt/gnu-getopt/bin:$PATH"
+
+  GNU getopt must be explicitly added to the PATH since it
+  is keg-only (https://docs.brew.sh/FAQ#what-does-keg-only-mean).
+
+END_OF_LINE
+  exit 1
+fi
+
+# Check to see if uv is installed
+if [ -z "$(command -v uv)" ]; then
+  cat << 'END_OF_LINE'
+  uv is required. Install it with:
+
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+  Or see https://docs.astral.sh/uv/getting-started/installation/ for more options.
+
+END_OF_LINE
+  exit 1
+fi
+
+# Use GNU getopt to parse options
+if ! PARSED=$(getopt --options "$SHORTOPTS" --longoptions "$LONGOPTS" --name "$0" -- "$@"); then
+  echo "Error parsing options"
+  exit 1
+fi
+eval set -- "$PARSED"
+
+while true; do
+  case "$1" in
+    -f | --force)
+      FORCE=1
+      shift
+      ;;
+    -h | --help)
+      echo "$USAGE"
+      exit 0
+      ;;
+    -i | --install-hooks)
+      INSTALL_HOOKS=1
+      shift
+      ;;
+    -l | --list-versions)
+      LIST_VERSIONS=1
+      shift
+      ;;
+    -p | --python-version)
+      PYTHON_VERSION="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      # Unreachable due to GNU getopt handling all options
+      echo "Programming error"
+      exit 64
+      ;;
+  esac
+done
+
+# List available Python versions and exit.
+if [ $LIST_VERSIONS -ne 0 ]; then
+  echo "Available Python versions:"
+  uv python list
+  exit 0
+fi
+
+# Remove any lingering virtual environment.
+if [ $FORCE -ne 0 ]; then
+  rm -rf .venv
+  rm -f .python-version
+elif [[ -d .venv ]]; then
+  cat << 'END_OF_LINE'
+  An existing .venv directory was found.  Either remove it yourself
+  or re-run with the --force option to have it deleted.
+
+  rm -rf .venv
+
+END_OF_LINE
+  exit 1
+fi
+
+# Pin the Python version if specified. This writes .python-version which
+# uv will pick up automatically on subsequent runs.
+if [ -n "$PYTHON_VERSION" ]; then
+  uv python pin "$PYTHON_VERSION"
+fi
+
+# Create the virtual environment and install all dev dependencies.
+# uv reads .python-version automatically if present.
+uv sync --group dev
+
+# Configure direnv for automatic virtual environment activation.
+if [ -n "$(command -v direnv)" ]; then
+  if [ ! -f .envrc ]; then
+    cat > .envrc << 'END_OF_LINE'
+VIRTUAL_ENV="$(pwd)/.venv"
+export VIRTUAL_ENV
+PATH_add "$VIRTUAL_ENV/bin"
+END_OF_LINE
+  fi
+  direnv allow
+else
+  cat << 'END_OF_LINE'
+  direnv is not installed.  Install it for automatic virtual environment
+  activation when entering this directory.  See https://direnv.net for
+  more information.
+
+END_OF_LINE
+fi
+
+# Activate the virtual environment for the remaining setup steps.
+# shellcheck disable=SC1091
+source .venv/bin/activate
+
+# Install all necessary mypy type stubs.
+mypy --install-types src/
+
+# Install git pre-commit hooks now or later.
+pre-commit install ${INSTALL_HOOKS:+"--install-hooks"}
+
+# Create Node.js virtual environment within the Python virtual environment.
+nodeenv --python-virtualenv
+
+# Install project node dependencies.
+npm install
+
+# Setup git remotes from lineage configuration.
+# This could fail if the remotes are already set up, but that is ok.
+set +o errexit
+
+eval "$(
+  python3 << 'END_OF_LINE'
+from pathlib import Path
+import yaml
+import sys
+
+LINEAGE_CONFIG = Path(".github/lineage.yml")
+
+if not LINEAGE_CONFIG.exists():
+    print("No lineage configuration found.", file=sys.stderr)
+    sys.exit(0)
+
+with LINEAGE_CONFIG.open("r") as f:
+    lineage = yaml.safe_load(stream=f)
+
+if lineage["version"] == "1":
+    for parent_name, v in lineage["lineage"].items():
+        remote_url = v["remote-url"]
+        print(f"git remote add {parent_name} {remote_url};")
+        print(f"git remote set-url --push {parent_name} no_push;")
+else:
+    print(f'Unsupported lineage version: {lineage["version"]}', file=sys.stderr)
+END_OF_LINE
+)"
+
+# Deactivate the virtual environment now that setup is complete.
+deactivate
+
+# Qapla'
+echo "Success!"

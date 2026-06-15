@@ -1,0 +1,36 @@
+---
+name: Label and close stale issues
+
+on: # yamllint disable-line rule:truthy
+  schedule:
+    - cron: 0 10 * * * # everyday at 10am
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # tag=v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+      - uses: actions/stale@eb5cf3af3ac0a1aa4c9c45633dd1ae542a27a899 # tag=v10.3.0
+        with:
+          days-before-stale: 28
+          days-before-close: 7
+          stale-issue-message: >-
+            This issue has been automatically marked as stale because it has been
+            inactive for 28 days. To reactivate the issue, simply post a comment
+            with the requested information to help us diagnose this issue. If this
+            issue remains inactive for another 7 days, it will be automatically
+            closed.
+          close-issue-message: >-
+            This issue has been automatically closed due to inactivity. If you are
+            still experiencing problems, please open a new issue.
+          stale-issue-label: "stale :skull:"
+          only-labels: "needs more info :thinking:"
