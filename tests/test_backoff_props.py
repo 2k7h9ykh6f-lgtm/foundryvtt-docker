@@ -41,7 +41,7 @@ def _run(
     script: str, env: dict | None = None, timeout: int = 10
 ) -> subprocess.CompletedProcess:
     """Run a bash snippet that sources backoff.sh with logging stubbed out."""
-    full_script = f"cd '{SRC_DIR}'\n{LOG_STUBS}\nsource cache.sh\nsource backoff.sh\n{script}"
+    full_script = f"cd '{SRC_DIR}'\n{LOG_STUBS}\nsource backoff.sh\n{script}"
     merged_env = {**os.environ, **(env or {})}
     merged_env.pop("KUBERNETES_SERVICE_HOST", None)
     if env and "KUBERNETES_SERVICE_HOST" in env:

@@ -86,7 +86,6 @@ COPY \
   package.json \
   package-lock.json \
   src/backoff.sh \
-  src/cache.sh \
   src/check_health.sh \
   src/entrypoint.sh \
   src/launcher.sh \
