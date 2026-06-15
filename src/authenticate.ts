@@ -45,6 +45,10 @@ const LOCAL_DOMAIN = "felddy.com";
 const LOGIN_URL = BASE_URL + "/auth/login/";
 const USERNAME_RE = /\/community\/(?<username>.+)/;
 
+// Unified exit codes (shared convention with backoff.sh and entrypoint.sh)
+const EXIT_RETRYABLE = 1;
+const EXIT_NON_RETRYABLE = 2;
+
 const HEADERS: Headers = new Headers({
     DNT: "1",
     Referer: BASE_URL,
@@ -191,8 +195,18 @@ async function main(): Promise<number> {
             `http://${LOCAL_DOMAIN}`,
         );
     } catch (err: any) {
-        logger.error(`Unable to authenticate: ${err.message}`);
-        return -1;
+        const msg = err.message || String(err);
+        // Credential / login errors are non-retryable — the operator must fix them.
+        if (
+            msg.includes("verify your credentials") ||
+            msg.includes("Unable to log in")
+        ) {
+            logger.error(`[NON_RETRYABLE] ${msg}`);
+            return EXIT_NON_RETRYABLE;
+        }
+        // All other errors (network, CSRF fetch, DNS) are transient.
+        logger.error(`[RETRYABLE] Unable to authenticate: ${msg}`);
+        return EXIT_RETRYABLE;
     }
     return 0;
 }

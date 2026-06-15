@@ -333,50 +333,39 @@ def test_no_cache_exits_0_on_sigterm() -> None:
     assert proc.returncode == 0, f"Expected exit 0 after SIGTERM, got {proc.returncode}"
 
 
-# ── Auth failure identical to generic failure ─────────────────────────────────
+# ── Non-retryable auth failure bypass ────────────────────────────────────────
 
 
-def test_auth_failure_same_delay_as_generic_failure(tmp_path: Path) -> None:
-    """An auth failure exit code produces the same delay as any other non-zero code.
+def test_non_retryable_skips_backoff(tmp_path: Path) -> None:
+    """Exit code 2 (non-retryable) skips backoff entirely — no state file, no sleep.
 
-    Both produce consecutive_failures=1 from a clean state, so the resulting
-    state file is identical regardless of the exit code passed.
-    Validates: Requirements 6.1, 6.3
+    Validates: Non-retryable failures exit immediately without touching state.
     """
-
-    def run_failure(exit_code: int, cache_dir: Path) -> dict:
-        script = textwrap.dedent(f"""\
-            CONTAINER_CACHE={cache_dir}
-            sleep() {{ :; }}
-            export -f sleep
-            backoff_on_failure {exit_code}
-        """)
-        _run(script)  # exits with exit_code, that's expected
-        return json.loads((cache_dir / "backoff_state.json").read_text())
-
-    auth_dir = tmp_path / "auth"
-    auth_dir.mkdir()
-    generic_dir = tmp_path / "generic"
-    generic_dir.mkdir()
-
-    auth_state = run_failure(1, auth_dir)
-    generic_state = run_failure(2, generic_dir)
-
+    script = textwrap.dedent(f"""\
+        CONTAINER_CACHE={tmp_path}
+        sleep() {{ :; }}
+        export -f sleep
+        backoff_on_failure 2
+    """)
+    result = _run(script)
     assert (
-        auth_state["consecutive_failures"] == generic_state["consecutive_failures"]
-    ), (
-        f"Auth failure count ({auth_state['consecutive_failures']}) differs from "
-        f"generic failure count ({generic_state['consecutive_failures']})"
+        result.returncode == 2
+    ), f"Expected exit 2, got {result.returncode}. stderr: {result.stderr}"
+
+    state_file = tmp_path / "backoff_state.json"
+    assert not state_file.exists(), (
+        "State file must not be created for non-retryable failures (exit code 2)"
     )
 
 
-def test_auth_failure_state_file_identical_to_generic(tmp_path: Path) -> None:
-    """Auth failure and generic failure produce identical state file contents.
+def test_retryable_creates_state_but_non_retryable_does_not(tmp_path: Path) -> None:
+    """Exit code 1 (retryable) creates a state file; exit code 2 does not.
 
-    Validates: Requirements 6.1, 6.3
+    Validates: The backoff layer correctly distinguishes retryable from
+    non-retryable failures.
     """
 
-    def run_failure(exit_code: int, cache_dir: Path) -> dict:
+    def run_failure(exit_code: int, cache_dir: Path) -> bool:
         script = textwrap.dedent(f"""\
             CONTAINER_CACHE={cache_dir}
             sleep() {{ :; }}
@@ -384,14 +373,16 @@ def test_auth_failure_state_file_identical_to_generic(tmp_path: Path) -> None:
             backoff_on_failure {exit_code}
         """)
         _run(script)
-        return json.loads((cache_dir / "backoff_state.json").read_text())
+        return (cache_dir / "backoff_state.json").exists()
 
-    auth_dir = tmp_path / "auth"
-    auth_dir.mkdir()
-    generic_dir = tmp_path / "generic"
-    generic_dir.mkdir()
+    retryable_dir = tmp_path / "retryable"
+    retryable_dir.mkdir()
+    non_retryable_dir = tmp_path / "non_retryable"
+    non_retryable_dir.mkdir()
 
-    auth_state = run_failure(1, auth_dir)
-    generic_state = run_failure(2, generic_dir)
-
-    assert auth_state["consecutive_failures"] == generic_state["consecutive_failures"]
+    assert run_failure(1, retryable_dir), (
+        "Retryable failure (exit 1) must create a state file"
+    )
+    assert not run_failure(2, non_retryable_dir), (
+        "Non-retryable failure (exit 2) must not create a state file"
+    )

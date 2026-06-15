@@ -11,6 +11,15 @@
 #
 # Depends on logging.sh being sourced by the caller before this file.
 
+# ── Unified exit-code convention ─────────────────────────────────────────────
+# These codes are shared with the TypeScript utilities (authenticate.js,
+# get_license.js, get_release_url.js) and entrypoint.sh.
+#   0 = success
+#   1 = retryable transient failure  (network, 5xx, timeout, empty response)
+#   2 = non-retryable failure        (bad credentials, 401/403, missing license)
+EXIT_RETRYABLE=1
+EXIT_NON_RETRYABLE=2
+
 # PID of any in-progress background sleep subprocess.
 # entrypoint.sh's trap_sigterm kills this PID to interrupt the sleep promptly.
 backoff_sleep_pid=""
@@ -65,6 +74,15 @@ backoff_on_failure() {
   if [[ -n "${KUBERNETES_SERVICE_HOST:-}" ]]; then
     log "Kubernetes environment detected.  Skipping backoff — CrashLoopBackOff will handle restart throttling."
     return
+  fi
+
+  # ── Non-retryable bypass ───────────────────────────────────────────────────
+  # Auth/credential failures (exit code 2) will never succeed on retry.
+  # Exit immediately without incrementing the backoff state file.
+  if [[ "${exit_code}" -eq "${EXIT_NON_RETRYABLE}" ]]; then
+    log_warn "[NON_RETRYABLE] Non-retryable failure (exit code ${exit_code}).  Not applying backoff — operator action required."
+    trap - EXIT
+    exit "${exit_code}"
   fi
 
   # ── No cache directory ─────────────────────────────────────────────────────
@@ -137,9 +155,9 @@ backoff_on_failure() {
   fi
 
   if ((delay == 0)); then
-    log_warn "Failure ${n} detected (exit code ${exit_code}).  Exiting immediately."
+    log_warn "[RETRYABLE] Failure ${n} detected (exit code ${exit_code}).  Exiting immediately."
   else
-    log_warn "Failure ${n} detected (exit code ${exit_code}).  Waiting ${delay}s before exiting."
+    log_warn "[RETRYABLE] Failure ${n} detected (exit code ${exit_code}).  Waiting ${delay}s before exiting."
   fi
 
   # Write updated state file atomically.
