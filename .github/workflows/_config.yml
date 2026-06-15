@@ -1,0 +1,35 @@
+---
+name: Config
+
+permissions: {}
+
+on: # yamllint disable-line rule:truthy
+  workflow_call:
+    inputs:
+      platforms:
+        description: The platforms to build (JSON array string)
+        default: >-
+          ["linux/amd64","linux/arm64","linux/ppc64le","linux/s390x"]
+        required: false
+        type: string
+    outputs:
+      image_name:
+        description: The container image name
+        value: felddy/foundryvtt
+      image_name_preinstall:
+        description: The pre-install container image name
+        value: felddy/foundryvtt-preinstall
+      platforms:
+        description: The platforms to build (JSON array string)
+        value: ${{ inputs.platforms }}
+      test_platforms:
+        description: The platform to use for testing (JSON array string)
+        value: '["linux/amd64"]'
+
+jobs:
+  config:
+    name: Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: echo "Configuration workflow"
