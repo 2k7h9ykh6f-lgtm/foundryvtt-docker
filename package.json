@@ -19,8 +19,8 @@
     "@types/node": "^25.9.1",
     "@types/tough-cookie": "^4.0.5",
     "@types/tough-cookie-file-store": "^2.0.4",
-    "tsx": "^4.19.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   },
   "homepage": "https://github.com/felddy/foundryvtt-docker#readme",
   "keywords": [
@@ -36,8 +36,7 @@
   },
   "scripts": {
     "build": "npx tsc",
-    "test": "tsx --test tests/test_config_schema.ts",
-    "test:all": "npm run build && npm test"
+    "test": "vitest run"
   },
   "type": "module",
   "version": "2.0.0"
