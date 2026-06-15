@@ -1,285 +1,123 @@
 #!/bin/bash
-
-# test_logging.sh — Verify unified log level behavior across logging.sh
 #
-# Runs 8 test scenarios covering:
-#   1. Default (info) level
-#   2. Debug level via FOUNDRY_LOG_LEVEL
-#   3. Warn level (quiet mode)
-#   4. Error level
-#   5. Backward compat: CONTAINER_VERBOSE → debug
-#   6. FOUNDRY_LOG_LEVEL overrides CONTAINER_VERBOSE
-#   7. Case insensitivity
-#   8. log() is alias for log_info()
+# Tests for src/logging.sh unified log-level filtering.
+# Run: bash tests/test_logging.sh
 #
-# Usage: bash tests/test_logging.sh
-
 set -o pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-LOGGING_SH="${REPO_ROOT}/src/logging.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../src" && pwd)"
+PASS=0
+FAIL=0
 
-PASS_COUNT=0
-FAIL_COUNT=0
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-# run_logging_test <description> <env_vars> <expected_present> <expected_absent>
-#
-# Sources logging.sh in a subshell with the given environment, calls all four
-# log functions, then checks that expected level tags are present/absent.
-run_logging_test() {
-  local description="$1"
-  local env_vars="$2"
-  local expected_present="$3"  # space-separated list of level tags that MUST appear
-  local expected_absent="$4"   # space-separated list of level tags that MUST NOT appear
-
-  # Run in a subshell so environment changes don't leak.
-  # Capture stdout from all four log function calls.
-  local output
-  output=$(
-    eval "${env_vars}"
-    export LOG_NAME="Test"
-    # shellcheck source=src/logging.sh
-    source "${LOGGING_SH}"
-    log_debug "debug-test-message"
-    log_info  "info-test-message"
-    log_warn  "warn-test-message"
-    log_error "error-test-message"
-  )
-
-  # Strip ANSI color codes for level-tag matching
-  local stripped
-  stripped=$(echo "${output}" | sed $'s/\e\\[[0-9;]*m//g')
-
-  local pass=true
-  local details=""
-
-  # Check expected-present levels
-  for tag in ${expected_present}; do
-    if ! echo "${stripped}" | grep -q "\[${tag}\]"; then
-      pass=false
-      details="${details}\n  MISSING expected [${tag}]"
-    fi
-  done
-
-  # Check expected-absent levels
-  for tag in ${expected_absent}; do
-    if echo "${stripped}" | grep -q "\[${tag}\]"; then
-      pass=false
-      details="${details}\n  UNEXPECTED [${tag}] found"
-    fi
-  done
-
-  # Verify message content for present levels
-  for msg in debug-test-message info-test-message warn-test-message error-test-message; do
-    local level_tag
-    case "${msg}" in
-      debug-*) level_tag="debug" ;;
-      info-*)  level_tag="info"  ;;
-      warn-*)  level_tag="warn"  ;;
-      error-*) level_tag="error" ;;
-    esac
-    if echo "${expected_present}" | grep -q "${level_tag}"; then
-      if ! echo "${stripped}" | grep -q "${msg}"; then
-        pass=false
-        details="${details}\n  MISSING message '${msg}'"
-      fi
-    else
-      if echo "${stripped}" | grep -q "${msg}"; then
-        pass=false
-        details="${details}\n  UNEXPECTED message '${msg}'"
-      fi
-    fi
-  done
-
-  if [[ "${pass}" == "true" ]]; then
-    PASS_COUNT=$((PASS_COUNT + 1))
-    echo "  PASS: ${description}"
+assert_contains() {
+  local label="$1" output="$2" expected="$3"
+  if echo "$output" | grep -q "$expected"; then
+    ((PASS++))
   else
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-    echo "  FAIL: ${description}"
-    echo -e "  Output was:"
-    echo "${output}" | sed 's/^/    /'
-    echo -e "${details}"
+    echo "FAIL [$label]: expected output to contain '$expected'"
+    echo "  got: $output"
+    ((FAIL++))
   fi
 }
 
-# ── Test Cases ───────────────────────────────────────────────────────────────
-
-echo "=== Shell Logging Tests (logging.sh) ==="
-echo ""
-
-# Test 1: Default level (info) — no env vars set
-run_logging_test \
-  "Default level (info): info+warn+error visible, debug hidden" \
-  "unset FOUNDRY_LOG_LEVEL; unset CONTAINER_VERBOSE;" \
-  "info warn error" \
-  "debug"
-
-# Test 2: FOUNDRY_LOG_LEVEL=debug — all levels visible
-run_logging_test \
-  "FOUNDRY_LOG_LEVEL=debug: all levels visible" \
-  "export FOUNDRY_LOG_LEVEL=debug;" \
-  "debug info warn error" \
-  ""
-
-# Test 3: FOUNDRY_LOG_LEVEL=warn (quiet mode) — only warn+error visible
-run_logging_test \
-  "FOUNDRY_LOG_LEVEL=warn (quiet): warn+error visible, info+debug hidden" \
-  "export FOUNDRY_LOG_LEVEL=warn;" \
-  "warn error" \
-  "debug info"
-
-# Test 4: FOUNDRY_LOG_LEVEL=error — only error visible
-run_logging_test \
-  "FOUNDRY_LOG_LEVEL=error: only error visible" \
-  "export FOUNDRY_LOG_LEVEL=error;" \
-  "error" \
-  "debug info warn"
-
-# Test 5: Backward compat — CONTAINER_VERBOSE implies debug
-run_logging_test \
-  "CONTAINER_VERBOSE set (backward compat): debug level enabled" \
-  "unset FOUNDRY_LOG_LEVEL; export CONTAINER_VERBOSE=true;" \
-  "debug info warn error" \
-  ""
-
-# Test 6: FOUNDRY_LOG_LEVEL overrides CONTAINER_VERBOSE
-run_logging_test \
-  "FOUNDRY_LOG_LEVEL=warn overrides CONTAINER_VERBOSE" \
-  "export FOUNDRY_LOG_LEVEL=warn; export CONTAINER_VERBOSE=true;" \
-  "warn error" \
-  "debug info"
-
-# Test 7: Case insensitivity — FOUNDRY_LOG_LEVEL=DEBUG works
-run_logging_test \
-  "Case insensitivity: FOUNDRY_LOG_LEVEL=DEBUG (uppercase)" \
-  "export FOUNDRY_LOG_LEVEL=DEBUG;" \
-  "debug info warn error" \
-  ""
-
-# Test 8: log() is alias for log_info()
-echo -n "  "
-output_8=$(
-  unset FOUNDRY_LOG_LEVEL
-  unset CONTAINER_VERBOSE
-  export LOG_NAME="Test"
-  # shellcheck source=src/logging.sh
-  source "${LOGGING_SH}"
-  log "alias-test-message"
-)
-stripped_8=$(echo "${output_8}" | sed $'s/\e\\[[0-9;]*m//g')
-if echo "${stripped_8}" | grep -q '\[info\]' && echo "${stripped_8}" | grep -q 'alias-test-message'; then
-  PASS_COUNT=$((PASS_COUNT + 1))
-  echo "PASS: log() outputs as info level (alias for log_info)"
-else
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-  echo "FAIL: log() should output as info level"
-  echo "  Output: ${output_8}"
-fi
-
-# ── Test: Entrypoint log level resolution ────────────────────────────────────
-
-echo ""
-echo "=== Entrypoint Log Level Bridge Tests ==="
-echo ""
-
-# Test the _ts_log_level resolution logic extracted from entrypoint.sh
-test_ts_log_level() {
-  local description="$1"
-  local env_setup="$2"
-  local expected_level="$3"
-
-  local result
-  result=$(
-    eval "${env_setup}"
-    # Replicate the resolution logic from entrypoint.sh
-    _ts_log_level="${FOUNDRY_LOG_LEVEL:-}"
-    if [[ -z "${_ts_log_level}" && "${CONTAINER_VERBOSE:-}" ]]; then
-      _ts_log_level="debug"
-    fi
-    _ts_log_level="${_ts_log_level:-info}"
-    echo "${_ts_log_level}"
-  )
-
-  if [[ "${result}" == "${expected_level}" ]]; then
-    PASS_COUNT=$((PASS_COUNT + 1))
-    echo "  PASS: ${description} → ${result}"
+assert_not_contains() {
+  local label="$1" output="$2" unexpected="$3"
+  if echo "$output" | grep -q "$unexpected"; then
+    echo "FAIL [$label]: expected output NOT to contain '$unexpected'"
+    echo "  got: $output"
+    ((FAIL++))
   else
-    FAIL_COUNT=$((FAIL_COUNT + 1))
-    echo "  FAIL: ${description} → got '${result}', expected '${expected_level}'"
+    ((PASS++))
   fi
 }
 
-echo -n ""
-test_ts_log_level \
-  "No env vars → info" \
-  "unset FOUNDRY_LOG_LEVEL; unset CONTAINER_VERBOSE;" \
-  "info"
+assert_empty() {
+  local label="$1" output="$2"
+  if [[ -z "$output" ]]; then
+    ((PASS++))
+  else
+    echo "FAIL [$label]: expected empty output"
+    echo "  got: $output"
+    ((FAIL++))
+  fi
+}
 
-test_ts_log_level \
-  "FOUNDRY_LOG_LEVEL=debug → debug" \
-  "export FOUNDRY_LOG_LEVEL=debug;" \
-  "debug"
+# Helper: run all four log functions in a subshell, capture stderr and stdout separately.
+# Sets: captured_stderr, captured_stdout
+run_log_functions() {
+  local env_setup="$1"
+  local tmpout tmperr
+  tmpout=$(mktemp)
+  tmperr=$(mktemp)
+  bash -c "${env_setup} LOG_NAME=Test; source '${SCRIPT_DIR}/logging.sh'; log_debug 'D'; log 'I'; log_warn 'W'; log_error 'E'" \
+    >"$tmpout" 2>"$tmperr" || true
+  captured_stdout=$(cat "$tmpout")
+  captured_stderr=$(cat "$tmperr")
+  rm -f "$tmpout" "$tmperr"
+}
 
-test_ts_log_level \
-  "FOUNDRY_LOG_LEVEL=warn → warn" \
-  "export FOUNDRY_LOG_LEVEL=warn;" \
-  "warn"
+echo "=== Testing src/logging.sh ==="
 
-test_ts_log_level \
-  "FOUNDRY_LOG_LEVEL=error → error" \
-  "export FOUNDRY_LOG_LEVEL=error;" \
-  "error"
+# ── Test 1: Default level (info) ───────────────────────────────────────────
+run_log_functions "unset CONTAINER_VERBOSE; unset CONTAINER_LOG_LEVEL;"
+assert_not_contains "default: no debug"  "$captured_stderr" "\\[.*debug.*\\]"
+assert_contains     "default: has info"  "$captured_stderr" "info"
+assert_contains     "default: has warn"  "$captured_stderr" "warn"
+assert_contains     "default: has error" "$captured_stderr" "error"
+assert_empty        "default: stdout empty" "$captured_stdout"
 
-test_ts_log_level \
-  "CONTAINER_VERBOSE=true → debug (backward compat)" \
-  "unset FOUNDRY_LOG_LEVEL; export CONTAINER_VERBOSE=true;" \
-  "debug"
+# ── Test 2: debug level ───────────────────────────────────────────────────
+run_log_functions "unset CONTAINER_VERBOSE; export CONTAINER_LOG_LEVEL=debug;"
+assert_contains "debug: has debug" "$captured_stderr" "debug"
+assert_contains "debug: has info"  "$captured_stderr" "info"
+assert_contains "debug: has warn"  "$captured_stderr" "warn"
+assert_contains "debug: has error" "$captured_stderr" "error"
+assert_empty    "debug: stdout empty" "$captured_stdout"
 
-test_ts_log_level \
-  "FOUNDRY_LOG_LEVEL=warn + CONTAINER_VERBOSE=true → warn (explicit wins)" \
-  "export FOUNDRY_LOG_LEVEL=warn; export CONTAINER_VERBOSE=true;" \
-  "warn"
+# ── Test 3: warn level ────────────────────────────────────────────────────
+run_log_functions "unset CONTAINER_VERBOSE; export CONTAINER_LOG_LEVEL=warn;"
+assert_not_contains "warn: no debug" "$captured_stderr" "debug"
+assert_not_contains "warn: no info"  "$captured_stderr" "info"
+assert_contains     "warn: has warn"  "$captured_stderr" "warn"
+assert_contains     "warn: has error" "$captured_stderr" "error"
 
-# ── Test: Log format consistency ──────────────────────────────────────────────
+# ── Test 4: error level ───────────────────────────────────────────────────
+run_log_functions "unset CONTAINER_VERBOSE; export CONTAINER_LOG_LEVEL=error;"
+assert_not_contains "error: no debug" "$captured_stderr" "debug"
+assert_not_contains "error: no info"  "$captured_stderr" "info"
+assert_not_contains "error: no warn"  "$captured_stderr" "warn"
+assert_contains     "error: has error" "$captured_stderr" "error"
 
+# ── Test 5: quiet level ───────────────────────────────────────────────────
+run_log_functions "unset CONTAINER_VERBOSE; export CONTAINER_LOG_LEVEL=quiet;"
+assert_empty "quiet: stderr empty" "$captured_stderr"
+assert_empty "quiet: stdout empty" "$captured_stdout"
+
+# ── Test 6: CONTAINER_VERBOSE backward compat ─────────────────────────────
+run_log_functions "export CONTAINER_VERBOSE=true; unset CONTAINER_LOG_LEVEL;"
+assert_contains "verbose compat: has debug" "$captured_stderr" "debug"
+assert_contains "verbose compat: has info"  "$captured_stderr" "info"
+
+# ── Test 7: CONTAINER_LOG_LEVEL takes precedence over CONTAINER_VERBOSE ───
+run_log_functions "export CONTAINER_VERBOSE=true; export CONTAINER_LOG_LEVEL=error;"
+assert_not_contains "precedence: no debug" "$captured_stderr" "debug"
+assert_not_contains "precedence: no info"  "$captured_stderr" "info"
+assert_contains     "precedence: has error" "$captured_stderr" "error"
+
+# ── Test 8: Output format matches expected pattern ────────────────────────
+run_log_functions "unset CONTAINER_VERBOSE; export CONTAINER_LOG_LEVEL=debug;"
+assert_contains "format: LOG_NAME prefix" "$captured_stderr" "^Test |"
+assert_contains "format: timestamp"       "$captured_stderr" "[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\} [0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}"
+
+# ── Test 9: Unknown level defaults to info ────────────────────────────────
+run_log_functions "unset CONTAINER_VERBOSE; export CONTAINER_LOG_LEVEL=bogus;"
+assert_not_contains "unknown: no debug" "$captured_stderr" "debug"
+assert_contains     "unknown: has info"  "$captured_stderr" "info"
+
+# ── Summary ────────────────────────────────────────────────────────────────
 echo ""
-echo "=== Log Format Tests ==="
-echo ""
-
-output_fmt=$(
-  unset FOUNDRY_LOG_LEVEL
-  unset CONTAINER_VERBOSE
-  export LOG_NAME="FormatTest"
-  # shellcheck source=src/logging.sh
-  source "${LOGGING_SH}"
-  log_info "format-check"
-)
-
-# Check that log line contains: LOG_NAME | timestamp | [level] message
-# Strip ANSI codes first
-stripped_fmt=$(echo "${output_fmt}" | sed $'s/\e\\[[0-9;]*m//g')
-if echo "${stripped_fmt}" | grep -qE 'FormatTest \| [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} \| \['; then
-  PASS_COUNT=$((PASS_COUNT + 1))
-  echo "  PASS: Log format matches '{name} | {timestamp} | [{level}] {msg}'"
-else
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-  echo "  FAIL: Log format does not match expected pattern"
-  echo "  Output: ${output_fmt}"
-fi
-
-# ── Summary ──────────────────────────────────────────────────────────────────
-
-echo ""
-echo "=== Summary ==="
-echo "  Passed: ${PASS_COUNT}"
-echo "  Failed: ${FAIL_COUNT}"
-echo ""
-
-if [[ ${FAIL_COUNT} -gt 0 ]]; then
+echo "Results: ${PASS} passed, ${FAIL} failed"
+if [[ $FAIL -gt 0 ]]; then
   exit 1
 fi
-exit 0
+echo "All tests passed."
