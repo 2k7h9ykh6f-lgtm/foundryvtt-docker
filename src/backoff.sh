@@ -9,7 +9,7 @@
 #   backoff_sleep_pid          — PID of the background sleep (if any); kill from
 #                                trap_sigterm to interrupt the sleep promptly
 #
-# Depends on logging.sh being sourced by the caller before this file.
+# Depends on logging.sh and cache.sh being sourced by the caller before this file.
 
 # PID of any in-progress background sleep subprocess.
 # entrypoint.sh's trap_sigterm kills this PID to interrupt the sleep promptly.
@@ -68,12 +68,10 @@ backoff_on_failure() {
   fi
 
   # ── No cache directory ─────────────────────────────────────────────────────
-  # Apply the same default as the install block: null → default path, empty → disabled.
+  # Apply the same default as cache.sh: null → default path, empty → disabled.
   # Then attempt to create the directory. If it can't be created (e.g. permissions
   # failure before /data is writable), treat it as disabled and sleep indefinitely.
-  if [[ -z "${CONTAINER_CACHE+x}" ]]; then
-    CONTAINER_CACHE="/data/container_cache"
-  fi
+  cache_resolve_dir
 
   if [[ -n "${CONTAINER_CACHE:-}" ]]; then
     if ! mkdir -p "${CONTAINER_CACHE}" 2> /dev/null; then
